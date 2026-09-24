@@ -1,0 +1,35 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Ambienti virtuali
+venv/
+.venv/
+env/
+ENV/
+
+# Variabili d'ambiente e segreti
+.env
+*.env
+!.env.example
+*.local
+
+# Database e stato locale
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+coordinator.db
+paper_treasury.json
+data/
+
+# IDE e file di sistema
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

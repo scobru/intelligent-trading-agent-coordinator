@@ -1,0 +1,172 @@
+"""
+Master Coordinator Loop: Il cervello orchestratore dell'ecosistema ITA su Base.
+Esegue periodicamente i controlli di telemetria, regime macro, gestione del rischio,
+gas balancing, ribilanciamento dei capitali e trigger dei cicli degli agenti.
+"""
+
+import argparse
+import logging
+import sys
+import time
+from datetime import datetime, timezone
+from typing import Any, Dict
+
+import config
+import db_utils
+from agent_client import AgentClient
+from capital_allocator import CapitalAllocator
+from gas_balancer import GasBalancer
+from regime_detector import RegimeDetector
+from risk_engine import RiskEngine
+from treasury import Treasury
+
+# Configurazione UTF-8 per console Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+# Configurazione logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("coordinator")
+
+class Coordinator:
+    def __init__(self):
+        db_utils.init_db()
+        self.treasury = Treasury()
+        self.agent_client = AgentClient()
+        self.regime_detector = RegimeDetector()
+        self.capital_allocator = CapitalAllocator()
+        self.risk_engine = RiskEngine()
+        self.gas_balancer = GasBalancer(w3=self.treasury.w3)
+
+    def run_cycle(self) -> Dict[str, Any]:
+        """Esegue un ciclo completo di coordinamento e telemetria."""
+        cycle_start = time.time()
+        logger.info("==================================================================")
+        logger.info("🚀 AVVIO CICLO COORDINATORE MASTER (Base L2)")
+        logger.info("==================================================================")
+
+        # 1. Recupero telemetria dai 6 agenti subordinati
+        logger.info("1/7 Interrogazione dei 6 agenti...")
+        agents_status = self.agent_client.get_all_statuses()
+        online_count = sum(1 for a in agents_status.values() if a.get("online"))
+        logger.info("   -> %d/6 agenti online e operativi.", online_count)
+
+        # 2. Lettura saldi Master Treasury
+        treasury_bals = self.treasury.get_treasury_balances()
+        treasury_usdc = treasury_bals.get("usdc", 0.0)
+        treasury_eth = treasury_bals.get("eth", 0.0)
+        logger.info("2/7 Master Treasury: $%.2f USDC | %.4f ETH", treasury_usdc, treasury_eth)
+
+        # 3. Analisi Macro e Regime di Mercato
+        logger.info("3/7 Rilevamento Regime di Mercato...")
+        regime_data = self.regime_detector.detect_regime()
+        regime = regime_data["regime"]
+        logger.info("   -> Regime: %s (Fear & Greed: %d, %s)",
+                    regime, regime_data["fear_and_greed"], regime_data["fear_and_greed_label"])
+
+        # 4. Valutazione Rischio Globale, Delta Netto e Circuit Breaker
+        logger.info("4/7 Valutazione del Rischio e Delta Netto...")
+        risk_data = self.risk_engine.evaluate_portfolio_risk(agents_status, treasury_usdc)
+        logger.info("   -> Net Worth Totale: $%.2f | PnL 24h: $%.2f (%.2f%%)",
+                    risk_data["total_net_worth_usd"], risk_data["pnl_24h_usd"], risk_data["pnl_24h_pct"])
+        logger.info("   -> Delta Netto: $%.2f (Ratio: %.1f%%) | Rischio: %s",
+                    risk_data["net_delta_usd"], risk_data["net_delta_ratio"] * 100, risk_data["risk_level"])
+
+        if risk_data["warnings"]:
+            for w in risk_data["warnings"]:
+                logger.warning("   [ALERT] %s", w)
+
+        # 5. Gas Balancing & Refuel automatico
+        logger.info("5/7 Verifica riserve Gas ETH su Base...")
+        gas_report = self.gas_balancer.check_wallets_gas(agents_status, treasury_executor=self.treasury)
+        if gas_report["refuels_performed"] > 0:
+            logger.info("   -> Eseguiti %d refuel di gas (Totale: %.4f ETH).",
+                        gas_report["refuels_performed"], gas_report["total_eth_sent"])
+
+        # 6. Calcolo Allocazione Capitale e Piani di Ribilanciamento
+        logger.info("6/7 Calcolo allocazione capitale per regime %s...", regime)
+        alloc_plan = self.capital_allocator.compute_allocation_plan(
+            regime=regime,
+            agents_status=agents_status,
+            treasury_cash_usd=treasury_usdc
+        )
+
+        executed_actions = 0
+        if alloc_plan["rebalance_needed"]:
+            logger.info("   -> Rilevate %d azioni di ribilanciamento consigliate:", len(alloc_plan["actions"]))
+            for act in alloc_plan["actions"]:
+                logger.info("      • %s: $%.2f (%s -> %s): %s",
+                            act.get("action"), act.get("amount_usd"), act.get("from_agent"), act.get("to_agent"), act.get("reason"))
+
+            # Esecuzione se abilitato AUTO_REBALANCE e non in blocco di emergenza
+            if config.AUTO_REBALANCE and not risk_data["circuit_breaker_active"]:
+                logger.info("   -> AUTO_REBALANCE attivo. Esecuzione trasferimenti...")
+                for act in alloc_plan["actions"]:
+                    ok = self.treasury.execute_rebalance_action(act, agents_status)
+                    if ok:
+                        executed_actions += 1
+            else:
+                logger.info("   -> AUTO_REBALANCE disattivato (modalita' solo monitoraggio).")
+
+        # 7. Salvataggio snapshot SQLite
+        logger.info("7/7 Archiviazione snapshot di portafoglio...")
+        consolidated_snapshot = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "total_net_worth_usd": risk_data["total_net_worth_usd"],
+            "regime": regime,
+            "fear_and_greed": regime_data["fear_and_greed"],
+            "circuit_breaker_active": risk_data["circuit_breaker_active"],
+            "pnl_24h_usd": risk_data["pnl_24h_usd"],
+            "pnl_24h_pct": risk_data["pnl_24h_pct"],
+            "risk_data": risk_data,
+            "regime_data": regime_data,
+            "treasury": treasury_bals,
+            "agents": agents_status,
+            "allocation_plan": alloc_plan,
+            "gas_report": gas_report,
+            "cycle_duration_seconds": round(time.time() - cycle_start, 2)
+        }
+        snap_id = db_utils.save_portfolio_snapshot(consolidated_snapshot)
+        logger.info("   -> Snapshot #%d archiviato con successo in SQLite.", snap_id)
+
+        # Notifica Telegram se configurato
+        try:
+            from telegram_bot import send_cycle_summary
+            send_cycle_summary(consolidated_snapshot)
+        except Exception as e:
+            logger.debug("Telegram notification skipped: %s", e)
+
+        logger.info("✅ CICLO COORDINATORE COMPLETATO IN %.2f SECONDI.\n", time.time() - cycle_start)
+        return consolidated_snapshot
+
+    def start_loop(self):
+        """Avvia il demone a intervalli regolari."""
+        logger.info("Avvio demone Coordinator a intervalli di %d secondi...", config.INTERVAL_SECONDS)
+        while True:
+            try:
+                self.run_cycle()
+            except Exception as exc:
+                logger.error("Errore critico durante il ciclo: %s", exc, exc_info=True)
+                db_utils.log_error("CRITICAL_CYCLE_ERROR", str(exc), source="coordinator_loop")
+
+            logger.info("Prossimo ciclo tra %d secondi. In attesa...", config.INTERVAL_SECONDS)
+            time.sleep(config.INTERVAL_SECONDS)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Master Coordinator per la suite ITA.")
+    parser.add_argument("--once", action="store_true", help="Esegue un solo ciclo e termina.")
+    args = parser.parse_args()
+
+    coord = Coordinator()
+    if args.once:
+        coord.run_cycle()
+    else:
+        coord.start_loop()

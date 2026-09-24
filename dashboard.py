@@ -1,0 +1,610 @@
+"""
+Master Dashboard Web per l'ecosistema ITA (Base L2).
+Fornisce una vista consolidata in tempo reale su Net Worth, Regime di mercato,
+Delta netto, stato dei 6 agenti, ribilanciamento dei capitali e storico operazioni.
+"""
+
+import hmac
+import json
+import logging
+import os
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+from typing import Any, Dict
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+import config
+import db_utils
+from coordinator import Coordinator
+
+logger = logging.getLogger(__name__)
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+STATIC_ROUTES = {
+    "/static/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
+    "/static/dashboard.js": ("dashboard.js", "application/javascript; charset=utf-8"),
+    "/static/icon.svg": ("icon.svg", "image/svg+xml"),
+    "/static/icon-small.svg": ("icon-small.svg", "image/svg+xml"),
+    "/static/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/static/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+    "/static/site.webmanifest": ("site.webmanifest", "application/manifest+json"),
+}
+
+_coordinator_instance: Coordinator = None
+_run_lock = threading.Lock()
+_latest_status_cache: Dict[str, Any] = {}
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <title>Master Coordinator | Intelligent Trading Agent Suite</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/static/favicon.ico">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="manifest" href="/static/site.webmanifest">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <style>
+    :root {
+      --primary: #8b5cf6;
+      --accent: #a78bfa;
+    }
+    .grid-kpi {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px;
+    }
+    .card h3 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .card .val {
+      font-size: 26px;
+      font-weight: 700;
+    }
+    .card .sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .agents-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .agent-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: transform .15s ease, border-color .15s ease;
+    }
+    .agent-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+    .agent-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+    .agent-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 15px;
+    }
+    .prog-bar {
+      height: 6px;
+      background: var(--surface-2);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .prog-fill {
+      height: 100%;
+      background: var(--primary);
+      border-radius: 3px;
+    }
+    .drift-pos { color: var(--success); }
+    .drift-neg { color: var(--warning); }
+    .panic-btn {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      padding: 7px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+      transition: all .2s;
+    }
+    .panic-btn:hover {
+      background: var(--danger);
+      color: #fff;
+    }
+    .run-btn {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 7px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .run-btn:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="header">
+    <div class="brand">
+      <img src="/static/icon.svg" alt="Coordinator Logo">
+      <div>
+        <h1>Master Coordinator <span id="mode-badge" class="badge b-paper">PAPER</span></h1>
+        <div class="tagline">Orchestratore Centrale Multi-Strategia su Base L2 (Chain ID 8453)</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span class="updated" id="last-update">Aggiornamento in corso...</span>
+      <button class="run-btn" id="btn-run" onclick="triggerCycle()">⚡ Esegui Ciclo Ora</button>
+      <button class="panic-btn" id="btn-panic" onclick="emergencyPanic()">🚨 Emergency Stop</button>
+    </div>
+  </header>
+
+  <!-- KPI GLOBALI -->
+  <div class="grid-kpi">
+    <div class="card">
+      <h3>Net Worth Consolidato</h3>
+      <div class="val" id="total-net-worth">--</div>
+      <div class="sub" id="pnl-24h">PnL 24h: --</div>
+    </div>
+    <div class="card">
+      <h3>Regime di Mercato</h3>
+      <div class="val" id="regime-name">--</div>
+      <div class="sub" id="regime-sub">Fear & Greed: --</div>
+    </div>
+    <div class="card">
+      <h3>Delta Netto (Esposizione)</h3>
+      <div class="val" id="net-delta">--</div>
+      <div class="sub" id="net-delta-sub">Esposizione: --</div>
+    </div>
+    <div class="card">
+      <h3>Master Treasury (Cassa)</h3>
+      <div class="val" id="treasury-cash">--</div>
+      <div class="sub" id="treasury-gas">Gas Riserva: --</div>
+    </div>
+  </div>
+
+  <!-- SEZIONE GRAFICO EQUITY -->
+  <div class="card" style="margin-bottom: 24px;">
+    <h3>Andamento del Valore Complessivo (Equity Curve)</h3>
+    <div id="chart-container" style="height: 180px; width: 100%;"></div>
+  </div>
+
+  <!-- STATO DEI 6 AGENTI SUBORDINATI -->
+  <h2 style="font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+    🤖 Nodi Operativi Subordinati (6 Agenti)
+  </h2>
+  <div class="agents-grid" id="agents-container">
+    <!-- Popolato dinamicamente da JS -->
+  </div>
+
+  <!-- ALLOCAZIONE TARGET VS REALE -->
+  <div class="card" style="margin-bottom: 24px;">
+    <h3>Matrice di Allocazione Strategica (Regime Corrente)</h3>
+    <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+      <thead>
+        <tr style="text-align: left; color: var(--muted); border-bottom: 1px solid var(--border);">
+          <th style="padding: 8px;">Strategia</th>
+          <th>Tipo</th>
+          <th>Target %</th>
+          <th>Attuale %</th>
+          <th>Valore Target</th>
+          <th>Valore Attuale</th>
+          <th>Scostamento (Drift)</th>
+        </tr>
+      </thead>
+      <tbody id="alloc-table">
+        <tr><td colspan="7" class="empty">Caricamento allocazione...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- OPERAZIONI RECENTI -->
+  <div class="card">
+    <h3>Ultime Operazioni & Ribilanciamenti Tesoreria</h3>
+    <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+      <thead>
+        <tr style="text-align: left; color: var(--muted); border-bottom: 1px solid var(--border);">
+          <th style="padding: 8px;">Data (UTC)</th>
+          <th>Operazione</th>
+          <th>Da</th>
+          <th>A</th>
+          <th>Importo</th>
+          <th>Stato</th>
+          <th>Motivazione</th>
+        </tr>
+      </thead>
+      <tbody id="ops-table">
+        <tr><td colspan="7" class="empty">Nessuna operazione registrata.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script src="/static/dashboard.js"></script>
+  <script>
+    let chartInstance = null;
+
+    function renderStatus(s) {
+      if (!s) return;
+
+      // Mode badge
+      const mb = document.getElementById('mode-badge');
+      if (s.mode === 'live') {
+        mb.className = 'badge b-live'; mb.textContent = 'LIVE';
+      } else if (s.mode === 'dry_run') {
+        mb.className = 'badge b-dry'; mb.textContent = 'DRY-RUN';
+      } else {
+        mb.className = 'badge b-paper'; mb.textContent = 'PAPER';
+      }
+
+      // Net Worth & PnL
+      document.getElementById('total-net-worth').textContent = ITA.usd(s.total_net_worth_usd);
+      const sign = (s.pnl_24h_usd >= 0) ? '+' : '';
+      const pnlEl = document.getElementById('pnl-24h');
+      pnlEl.textContent = `PnL 24h: ${sign}${ITA.usd(s.pnl_24h_usd)} (${sign}${s.pnl_24h_pct.toFixed(2)}%)`;
+      pnlEl.style.color = (s.pnl_24h_usd >= 0) ? 'var(--success)' : 'var(--danger)';
+
+      // Regime
+      document.getElementById('regime-name').textContent = s.regime || '--';
+      const fg = s.fear_and_greed || 50;
+      document.getElementById('regime-sub').textContent = `Fear & Greed: ${fg} (${s.regime_data?.fear_and_greed_label || 'Neutral'})`;
+
+      // Delta Netto
+      const r = s.risk_data || {};
+      document.getElementById('net-delta').textContent = ITA.usd(r.net_delta_usd);
+      const ratio = ((r.net_delta_ratio || 0) * 100).toFixed(1);
+      document.getElementById('net-delta-sub').textContent = `Esposizione: ${ratio}% Long`;
+
+      // Treasury
+      const tr = s.treasury || {};
+      document.getElementById('treasury-cash').textContent = ITA.usd(tr.usdc);
+      document.getElementById('treasury-gas').textContent = `ETH Gas: ${(tr.eth || 0).toFixed(4)} ETH`;
+
+      // Render 6 Agents Cards
+      renderAgents(s.agents || {}, s.allocation_plan?.allocations || {});
+
+      // Render Allocation Table
+      renderAllocTable(s.allocation_plan?.allocations || {});
+    }
+
+    function renderAgents(agents, allocs) {
+      const container = document.getElementById('agents-container');
+      const html = Object.keys(agents).map(aid => {
+        const a = agents[aid];
+        const al = allocs[aid] || {};
+        const onlineBadge = a.online ? '<span class="badge b-ok">ONLINE</span>' : '<span class="badge b-bad">OFFLINE</span>';
+        const actualPct = (al.actual_pct ? (al.actual_pct * 100).toFixed(1) : 0);
+        const targetPct = (al.target_pct ? (al.target_pct * 100).toFixed(1) : 0);
+
+        return `
+          <div class="agent-card">
+            <div class="agent-header">
+              <div class="agent-title">
+                <span style="font-size: 18px;">${a.icon || '🤖'}</span>
+                <span>${a.name}</span>
+              </div>
+              ${onlineBadge}
+            </div>
+            <div style="font-size: 12px; color: var(--muted);">${a.description || ''}</div>
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <div>
+                <div style="font-size: 11px; color: var(--muted);">EQUITY ASSEGNATA</div>
+                <div style="font-size: 20px; font-weight: 700;">${ITA.usd(a.equity_usd)}</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-size: 11px; color: var(--muted);">QUOTA PORTAFOGLIO</div>
+                <div style="font-size: 14px; font-weight: 600;">${actualPct}% <span style="font-size: 11px; color: var(--muted);">(tgt ${targetPct}%)</span></div>
+              </div>
+            </div>
+            <div class="prog-bar">
+              <div class="prog-fill" style="width: ${Math.min(100, actualPct)}%; background: ${a.color || 'var(--primary)'};"></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 12px; border-top: 1px solid var(--border); padding-top: 8px;">
+              <span>Posizioni: <strong>${a.positions_count || 0}</strong></span>
+              <span>Gas ETH: <strong>${(a.gas_eth || 0).toFixed(4)}</strong></span>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 4px;">
+              <a href="${a.url || '#'}" target="_blank" style="font-size: 12px; text-decoration: none;">Apri Dashboard ↗</a>
+              <button onclick="triggerAgentRun('${aid}')" style="background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 3px 8px; font-size: 11px; cursor: pointer;">Avvia Ciclo</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+      container.innerHTML = html;
+    }
+
+    function renderAllocTable(allocs) {
+      const tbody = document.getElementById('alloc-table');
+      if (!allocs || Object.keys(allocs).length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">Nessuna allocazione disponibile.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = Object.keys(allocs).map(aid => {
+        const al = allocs[aid];
+        const driftCls = (al.drift_usd >= 0) ? 'drift-pos' : 'drift-neg';
+        const sign = (al.drift_usd >= 0) ? '+' : '';
+        return `
+          <tr style="border-bottom: 1px solid var(--border);">
+            <td style="padding: 10px 8px; font-weight: 600;">${aid.toUpperCase()}</td>
+            <td style="color: var(--muted); font-size: 12px;">${al.target_pct > 0.2 ? 'Core Strategy' : 'Satellite'}</td>
+            <td>${(al.target_pct * 100).toFixed(1)}%</td>
+            <td>${(al.actual_pct * 100).toFixed(1)}%</td>
+            <td>${ITA.usd(al.target_usd)}</td>
+            <td>${ITA.usd(al.actual_usd)}</td>
+            <td class="${driftCls}"><strong>${sign}${ITA.usd(al.drift_usd)}</strong> (${sign}${al.drift_pct.toFixed(1)}%)</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderOps(ops) {
+      const tbody = document.getElementById('ops-table');
+      if (!ops || ops.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">Nessuna operazione registrata.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = ops.map(o => `
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 8px;">${ITA.time(o.created_at)}</td>
+          <td><span class="badge b-ok">${o.operation_type}</span></td>
+          <td>${o.from_agent || 'Master'}</td>
+          <td>${o.to_agent || '--'}</td>
+          <td style="font-weight: 600;">${o.asset === 'ETH' ? o.amount + ' ETH' : ITA.usd(o.amount)}</td>
+          <td>${ITA.statusBadge(o.status)}</td>
+          <td style="color: var(--muted); font-size: 12px;">${ITA.esc(o.reason || '')}</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderChart(snaps) {
+      if (!snaps || snaps.length === 0) return;
+      const el = document.getElementById('chart-container');
+      const labels = snaps.map(s => ITA.time(s.created_at));
+      const values = snaps.map(s => s.total_net_worth_usd);
+
+      chartInstance = ITA.lineChart(chartInstance, el, labels, [
+        { label: 'Net Worth ($)', data: values }
+      ]);
+    }
+
+    async function refresh() {
+      try {
+        const [stRes, snapRes, opRes] = await Promise.all([
+          fetch('/api/status').then(r => r.json()),
+          fetch('/api/snapshots').then(r => r.json()),
+          fetch('/api/operations').then(r => r.json())
+        ]);
+        renderStatus(stRes);
+        renderOps(opRes);
+        renderChart(snapRes);
+        document.getElementById('last-update').textContent = 'Aggiornato: ' + new Date().toLocaleTimeString();
+      } catch(err) {
+        console.error('Errore refresh:', err);
+      }
+    }
+
+    async function triggerCycle() {
+      const btn = document.getElementById('btn-run');
+      btn.disabled = true;
+      btn.textContent = '⏳ Esecuzione in corso...';
+      try {
+        await fetch('/api/run', { method: 'POST' });
+        setTimeout(refresh, 2500);
+      } catch(e) {
+        alert('Errore esecuzione ciclo: ' + e);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ Esegui Ciclo Ora';
+      }
+    }
+
+    async function emergencyPanic() {
+      if (!confirm('ATTENZIONE: Attivare il blocco di emergenza globale? Tutti i bot speculativi verranno congelati.')) return;
+      try {
+        await fetch('/api/emergency_stop', { method: 'POST' });
+        alert('Blocco di emergenza attivato!');
+        refresh();
+      } catch(e) {
+        alert('Errore: ' + e);
+      }
+    }
+
+    async function triggerAgentRun(aid) {
+      try {
+        await fetch('/api/agent_run/' + aid, { method: 'POST' });
+        alert('Segnale inviato con successo a ' + aid);
+      } catch(e) {
+        alert('Errore: ' + e);
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 20000); // Auto-refresh ogni 20 secondi
+  </script>
+</body>
+</html>
+"""
+
+class MasterDashboardHandler(BaseHTTPRequestHandler):
+    coordinator: Coordinator = None
+
+    def log_message(self, format, *args):
+        pass  # Silenzia access logs per pulizia terminale
+
+    def _json(self, code: int, payload: Any):
+        body = json.dumps(payload, default=str).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path in ("/", "/index.html"):
+            body = HTML_TEMPLATE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path in STATIC_ROUTES:
+            fname, ctype = STATIC_ROUTES[path]
+            fpath = os.path.join(STATIC_DIR, fname)
+            try:
+                with open(fpath, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            except OSError:
+                self.send_response(404)
+                self.end_headers()
+                return
+
+        if path == "/api/status":
+            global _latest_status_cache
+            # Se la cache e' vuota, eseguiamo o leggiamo l'ultimo snapshot
+            snaps = db_utils.get_recent_snapshots(limit=1)
+            if snaps and not _latest_status_cache:
+                last_snap = snaps[0]
+                try:
+                    conn = db_utils.get_connection()
+                    cur = conn.cursor()
+                    cur.execute("SELECT details_json FROM portfolio_snapshots WHERE id = ?", (last_snap["id"],))
+                    row = cur.fetchone()
+                    conn.close()
+                    if row and row["details_json"]:
+                        _latest_status_cache = json.loads(row["details_json"])
+                except Exception:
+                    pass
+
+            if not _latest_status_cache and self.coordinator:
+                _latest_status_cache = self.coordinator.run_cycle()
+
+            _latest_status_cache["mode"] = "paper" if config.PAPER_TRADING else ("dry_run" if config.DRY_RUN else "live")
+            self._json(200, _latest_status_cache)
+            return
+
+        if path == "/api/snapshots":
+            snaps = db_utils.get_recent_snapshots(limit=100)
+            self._json(200, snaps)
+            return
+
+        if path == "/api/operations":
+            ops = db_utils.get_recent_operations(limit=50)
+            self._json(200, ops)
+            return
+
+        if path == "/health":
+            self._json(200, {"status": "healthy", "service": "coordinator"})
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path == "/api/run":
+            auth = self.headers.get("Authorization", "").replace("Bearer ", "").strip()
+            if config.DASHBOARD_RUN_TOKEN and not hmac.compare_digest(auth, config.DASHBOARD_RUN_TOKEN):
+                self._json(403, {"error": "unauthorized"})
+                return
+
+            def _bg_run():
+                global _latest_status_cache
+                with _run_lock:
+                    try:
+                        if self.coordinator:
+                            _latest_status_cache = self.coordinator.run_cycle()
+                    except Exception as e:
+                        logger.error("Errore esecuzione run coordinator: %s", e)
+
+            threading.Thread(target=_bg_run, daemon=True).start()
+            self._json(200, {"status": "started"})
+            return
+
+        if path.startswith("/api/agent_run/"):
+            aid = path.replace("/api/agent_run/", "").strip()
+            if self.coordinator:
+                res = self.coordinator.agent_client.trigger_agent_run(aid)
+                self._json(200, res)
+            else:
+                self._json(500, {"error": "Coordinator non inizializzato"})
+            return
+
+        if path == "/api/emergency_stop":
+            logger.warning("🚨 EMERGENCY STOP RICHIESTO DA DASHBOARD!")
+            db_utils.log_error("EMERGENCY_STOP_TRIGGERED", "Attivato blocco globale dalla dashboard", source="dashboard")
+            self._json(200, {"status": "emergency_activated"})
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+def run_dashboard():
+    global _coordinator_instance
+    _coordinator_instance = Coordinator()
+    MasterDashboardHandler.coordinator = _coordinator_instance
+
+    server = ThreadingHTTPServer((config.DASHBOARD_HOST, config.DASHBOARD_PORT), MasterDashboardHandler)
+    logger.info("🌐 Master Coordinator Dashboard avviata su http://%s:%s",
+                config.DASHBOARD_HOST, config.DASHBOARD_PORT)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logger.info("Chiusura dashboard...")
+    finally:
+        server.server_close()
+
+if __name__ == "__main__":
+    run_dashboard()

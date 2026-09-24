@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  coordinator:
+    build: .
+    container_name: ita-coordinator
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    environment:
+      - BASE_RPC_URL=https://mainnet.base.org
+      - CHAIN_ID=8453
+      - DRY_RUN=true
+      - PAPER_TRADING=true
+      - PAPER_START_USDC=10000.0
+      - AGENT_PERP_URL=http://ita-perp:3000
+      - AGENT_YIELD_URL=http://ita-yield:3000
+      - AGENT_NEUTRAL_URL=http://ita-neutral:3000
+      - AGENT_LP_URL=http://ita-lp:3000
+      - AGENT_DCA_URL=http://ita-dca:3000
+      - AGENT_DEGEN_URL=http://ita-degen:3000
+      - COORDINATOR_INTERVAL_SECONDS=900
+      - AUTO_REBALANCE=false
+      - SQLITE_DB_PATH=/app/data/coordinator.db
+    volumes:
+      - coordinator-data:/app/data
+
+volumes:
+  coordinator-data:
