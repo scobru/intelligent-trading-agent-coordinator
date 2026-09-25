@@ -520,13 +520,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function triggerCycle() {
       const btn = document.getElementById('btn-run');
       btn.disabled = true;
-      btn.textContent = '⏳ Esecuzione in corso...';
+      btn.textContent = '⏳ Invio richiesta...';
       try {
-        await fetch('/api/run', { method: 'POST' });
-        setTimeout(refresh, 2500);
+        const res = await fetch('/api/run', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'DashboardUI'
+          }
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert('Attenzione: ' + (data.message || data.error || ('HTTP ' + res.status)));
+          btn.disabled = false;
+          btn.textContent = '⚡ Esegui Ciclo Ora';
+        } else {
+          btn.textContent = '🔄 Ciclo in elaborazione...';
+          let count = 0;
+          const poll = setInterval(async () => {
+            count++;
+            await refresh();
+            if (count >= 5) {
+              clearInterval(poll);
+              btn.disabled = false;
+              btn.textContent = '⚡ Esegui Ciclo Ora';
+            }
+          }, 2500);
+        }
       } catch(e) {
-        alert('Errore esecuzione ciclo: ' + e);
-      } finally {
+        alert('Errore di connessione durante esecuzione ciclo: ' + e);
         btn.disabled = false;
         btn.textContent = '⚡ Esegui Ciclo Ora';
       }
@@ -574,8 +596,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     async function triggerAgentRun(aid) {
       try {
-        await fetch('/api/agent_run/' + aid, { method: 'POST' });
-        alert('Segnale inviato con successo a ' + aid);
+        const res = await fetch('/api/agent_run/' + aid, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && (data.status === 'success' || data.success || !data.error)) {
+          alert('Segnale di avvio ciclo inviato con successo a ' + aid);
+          setTimeout(refresh, 2000);
+        } else {
+          alert('Errore invio segnale a ' + aid + ': ' + (data.message || data.error || JSON.stringify(data)));
+        }
       } catch(e) {
         alert('Errore: ' + e);
       }
@@ -717,22 +745,32 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
         path = parsed.path
 
         if path == "/api/run":
+            token = getattr(config, "DASHBOARD_RUN_TOKEN", "")
             auth = self.headers.get("Authorization", "").replace("Bearer ", "").strip()
-            if config.DASHBOARD_RUN_TOKEN and not hmac.compare_digest(auth, config.DASHBOARD_RUN_TOKEN):
-                self._json(403, {"error": "unauthorized"})
+            is_browser_ui = self.headers.get("X-Requested-With") == "DashboardUI" or self.headers.get("Sec-Fetch-Site") in ("same-origin", "same-site")
+            if token and not is_browser_ui and not (auth and hmac.compare_digest(auth, token)):
+                self._json(403, {"error": "unauthorized", "message": "Autenticazione richiesta per /api/run"})
+                return
+
+            if _run_lock.locked():
+                self._json(409, {"status": "already_running", "message": "Un ciclo è già in corso di esecuzione."})
                 return
 
             def _bg_run():
                 global _latest_status_cache
                 with _run_lock:
                     try:
-                        if self.coordinator:
-                            _latest_status_cache = self.coordinator.run_cycle()
+                        logger.info("⚡ [MANUAL RUN] Avvio manuale del ciclo Coordinator richiesto da Web Dashboard...")
+                        coord = self.coordinator or _coordinator_instance
+                        if not coord:
+                            coord = Coordinator()
+                        _latest_status_cache = coord.run_cycle()
+                        logger.info("⚡ [MANUAL RUN] Ciclo completato con successo.")
                     except Exception as e:
-                        logger.error("Errore esecuzione run coordinator: %s", e)
+                        logger.error("Errore esecuzione run coordinator: %s", e, exc_info=True)
 
             threading.Thread(target=_bg_run, daemon=True).start()
-            self._json(200, {"status": "started"})
+            self._json(200, {"status": "started", "message": "Ciclo avviato con successo in background."})
             return
 
         if path.startswith("/api/agent_run/"):

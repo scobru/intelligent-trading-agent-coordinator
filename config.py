@@ -118,7 +118,8 @@ AGENTS = {
     }
 }
 
-AGENT_RUN_TOKEN = os.getenv("AGENT_RUN_TOKEN", os.getenv("DASHBOARD_RUN_TOKEN", ""))
+DASHBOARD_RUN_TOKEN = os.getenv("DASHBOARD_RUN_TOKEN", "").strip()
+AGENT_RUN_TOKEN = os.getenv("AGENT_RUN_TOKEN", DASHBOARD_RUN_TOKEN).strip()
 AGENT_HTTP_USER = os.getenv("AGENT_HTTP_USER", os.getenv("HTTP_BASIC_USER", "scobru")).strip()
 AGENT_HTTP_PASS = os.getenv("AGENT_HTTP_PASS", os.getenv("HTTP_BASIC_PASS", AGENT_RUN_TOKEN or "francos88")).strip()
 
