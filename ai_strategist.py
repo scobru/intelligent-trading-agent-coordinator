@@ -144,7 +144,7 @@ class AiStrategist:
                         "Analizza la situazione di mercato e la performance dei 6 bot subordinati (Perp, Yield, Neutral, LP, DCA, Degen). "
                         "Il tuo obiettivo prioritario è proteggere il capitale, tagliare le strategie in perdita/drawdown e riallocare fondi "
                         "verso le strategie più profittevoli o stabili. "
-                        "Rispondi ESCLUSIVAMENTE in formato JSON valido senza codice markdown o spiegazioni extra, con lo schema:\n"
+                        "Rispondi ESCLUSIVAMENTE in formato JSON valido senza codice markdown o testo introduttivo con questo schema esatto:\n"
                         "{\n"
                         '  "market_briefing": "Breve sintesi macro e di portafoglio in italiano (max 250 caratteri)",\n'
                         '  "best_strategy": "id_agente_migliore",\n'
@@ -157,17 +157,40 @@ class AiStrategist:
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2,
-            "max_tokens": 600
+            "max_tokens": 1000
         }
 
         try:
             resp = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=TIMEOUT_SECONDS)
             if resp.status_code == 200:
-                raw_txt = resp.json()["choices"][0]["message"]["content"].strip()
+                data = resp.json()
+                choices = data.get("choices", [])
+                if not choices:
+                    logger.warning("Risposta OpenRouter priva di choices: %s", data)
+                    return None
+
+                msg = choices[0].get("message", {})
+                raw_txt = msg.get("content") or msg.get("reasoning") or ""
+                if not raw_txt:
+                    logger.warning("Messaggio OpenRouter vuoto o nullo: %s", msg)
+                    return None
+
+                raw_txt = str(raw_txt).strip()
+                # Rimuove eventuali tag <think>...</think> (DeepSeek R1 / Qwen)
+                raw_txt = re.sub(r"<think>.*?</think>", "", raw_txt, flags=re.DOTALL).strip()
                 # Pulizia eventuale markdown ```json ... ```
                 raw_txt = re.sub(r"^```[a-zA-Z]*\n?", "", raw_txt)
                 raw_txt = re.sub(r"\n?```$", "", raw_txt).strip()
-                return json.loads(raw_txt)
+
+                # Tenta prima il parsing diretto
+                try:
+                    return json.loads(raw_txt)
+                except Exception:
+                    # Cerca il blocco { ... } tramite regex
+                    match = re.search(r"\{.*\}", raw_txt, re.DOTALL)
+                    if match:
+                        return json.loads(match.group(0))
+                    raise ValueError(f"Impossibile estrarre JSON da: {raw_txt[:150]}")
             else:
                 logger.warning("OpenRouter API error (status %d): %s", resp.status_code, resp.text[:200])
         except Exception as exc:

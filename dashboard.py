@@ -588,6 +588,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </html>
 """
 
+class SafeThreadingHTTPServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        exc_type, exc_value, _ = sys.exc_info()
+        # Silenzia disconnessioni tipiche da parte dei client/browser/healthcheck (BrokenPipe, ConnectionReset)
+        if exc_type in (BrokenPipeError, ConnectionResetError) or (isinstance(exc_value, OSError) and getattr(exc_value, "errno", None) in (32, 104)):
+            return
+        super().handle_error(request, client_address)
+
 class MasterDashboardHandler(BaseHTTPRequestHandler):
     coordinator: Coordinator = None
 
@@ -595,15 +603,24 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
         pass  # Silenzia access logs per pulizia terminale
 
     def _json(self, code: int, payload: Any):
-        body = json.dumps(payload, default=str).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            body = json.dumps(payload, default=str).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def do_GET(self):
+        try:
+            self._do_GET_internal()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _do_GET_internal(self):
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -787,7 +804,7 @@ def run_dashboard():
     servers = []
     for port in ports_to_listen:
         try:
-            srv = ThreadingHTTPServer((config.DASHBOARD_HOST, port), MasterDashboardHandler)
+            srv = SafeThreadingHTTPServer((config.DASHBOARD_HOST, port), MasterDashboardHandler)
             print(f"🚀 Master Coordinator Dashboard attiva su http://{config.DASHBOARD_HOST}:{port}", flush=True)
             logger.info("🌐 Master Coordinator Dashboard avviata su http://%s:%s", config.DASHBOARD_HOST, port)
             servers.append(srv)
