@@ -65,22 +65,32 @@ class Coordinator:
         online_count = sum(1 for a in agents_status.values() if a.get("online"))
         logger.info("   -> %d/6 agenti online e operativi.", online_count)
 
-        # 2. Lettura saldi Master Treasury
-        treasury_bals = self.treasury.get_treasury_balances()
-        treasury_usdc = treasury_bals.get("usdc", 0.0)
-        treasury_eth = treasury_bals.get("eth", 0.0)
-        logger.info("2/8 Master Treasury: $%.2f USDC | %.4f ETH", treasury_usdc, treasury_eth)
-
-        # 3. Analisi Macro e Regime di Mercato
-        logger.info("3/8 Rilevamento Regime di Mercato...")
+        # 2. Analisi Macro e Regime di Mercato
+        logger.info("2/8 Rilevamento Regime di Mercato e Prezzi Asset...")
         regime_data = self.regime_detector.detect_regime()
         regime = regime_data["regime"]
-        logger.info("   -> Regime: %s (Fear & Greed: %d, %s)",
-                    regime, regime_data["fear_and_greed"], regime_data["fear_and_greed_label"])
+        eth_price = float(regime_data.get("eth_price", 0.0) or 2650.0)
+        logger.info("   -> Regime: %s (Fear & Greed: %d, %s) | Prezzo ETH: $%.2f",
+                    regime, regime_data["fear_and_greed"], regime_data["fear_and_greed_label"], eth_price)
+
+        # 3. Lettura saldi Master Treasury con controvalore totale
+        logger.info("3/8 Calcolo saldi Master Treasury con controvalore ETH...")
+        treasury_bals = self.treasury.get_treasury_balances(eth_price=eth_price)
+        treasury_usdc = treasury_bals.get("usdc", 0.0)
+        treasury_eth = treasury_bals.get("eth", 0.0)
+        treasury_eth_usd = treasury_bals.get("eth_usd", 0.0)
+        treasury_total_usd = treasury_bals.get("total_usd", treasury_usdc + treasury_eth_usd)
+        logger.info("   -> Master Treasury: $%.2f USDC + %.4f ETH ($%.2f) = Valore Totale $%.2f",
+                    treasury_usdc, treasury_eth, treasury_eth_usd, treasury_total_usd)
 
         # 4. Valutazione Rischio Globale, Delta Netto e Circuit Breaker
         logger.info("4/8 Valutazione del Rischio e Delta Netto...")
-        risk_data = self.risk_engine.evaluate_portfolio_risk(agents_status, treasury_usdc)
+        risk_data = self.risk_engine.evaluate_portfolio_risk(
+            agents_status=agents_status,
+            treasury_cash_usd=treasury_usdc,
+            treasury_eth=treasury_eth,
+            eth_price=eth_price
+        )
         logger.info("   -> Net Worth Totale: $%.2f | PnL 24h: $%.2f (%.2f%%)",
                     risk_data["total_net_worth_usd"], risk_data["pnl_24h_usd"], risk_data["pnl_24h_pct"])
         logger.info("   -> Delta Netto: $%.2f (Ratio: %.1f%%) | Rischio: %s",

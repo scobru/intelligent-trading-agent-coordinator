@@ -100,17 +100,30 @@ class CapitalAllocator:
                 })
 
         # 3. Rebalancing standard tra surplus e deficit
-        # Se abbiamo liquidita' inattiva in Yield o in Master Treasury, finanziamo i bot sottopesati (es. DCA)
+        # Se abbiamo liquidita' inattiva in Master Treasury o in bot in surplus, finanziamo i bot sottopesati (es. Perp, DCA, LP)
         for agent_id, deficit in underweight:
             # Non finanziare bot a rischio se siamo in Panic
             if regime == "BEAR_PANIC" and agent_id in ("degen", "lp"):
                 continue
 
-            yield_surplus = allocations.get("yield", {}).get("drift_usd", 0.0)
-            source = "yield" if yield_surplus > self.min_rebalance_usd else "master_treasury"
+            # Priorità della sorgente:
+            # 1. Master Treasury se ha saldo disponibile
+            # 2. Altrimenti, l'agente con il surplus più cospicuo
+            source = "master_treasury"
+            if treasury_cash_usd >= self.min_rebalance_usd:
+                source = "master_treasury"
+            elif overweight:
+                sorted_over = sorted(overweight, key=lambda x: x[1], reverse=True)
+                source = sorted_over[0][0]
+            elif treasury_cash_usd >= 5.0:
+                source = "master_treasury"
 
             amount_to_fund = min(deficit, 1000.0)  # Cap conservativo per transazione
-            if amount_to_fund >= self.min_rebalance_usd:
+            if source == "master_treasury" and treasury_cash_usd > 0:
+                amount_to_fund = min(amount_to_fund, treasury_cash_usd)
+
+            min_threshold = min(self.min_rebalance_usd, 5.0) if source == "master_treasury" else self.min_rebalance_usd
+            if amount_to_fund >= min_threshold:
                 actions.append({
                     "action": "REBALANCE_FUND",
                     "from_agent": source,

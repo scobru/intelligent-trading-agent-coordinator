@@ -232,9 +232,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <div class="sub" id="net-delta-sub">Esposizione: --</div>
     </div>
     <div class="card">
-      <h3>Master Treasury (Cassa)</h3>
+      <h3>Master Treasury (Cassa Totale)</h3>
       <div class="val" id="treasury-cash">--</div>
-      <div class="sub" id="treasury-gas">Gas Riserva: --</div>
+      <div class="sub" id="treasury-gas">USDC + ETH Gas: --</div>
     </div>
   </div>
 
@@ -355,8 +355,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
       // Treasury
       const tr = s.treasury || {};
-      document.getElementById('treasury-cash').textContent = ITA.usd(tr.usdc);
-      document.getElementById('treasury-gas').textContent = `ETH Gas: ${(tr.eth || 0).toFixed(4)} ETH`;
+      const ethPrice = s.regime_data?.eth_price || 2690;
+      const trEthUsd = (tr.eth_usd !== undefined) ? tr.eth_usd : ((tr.eth || 0) * ethPrice);
+      const trTotal = (tr.total_usd !== undefined) ? tr.total_usd : ((tr.usdc || 0) + trEthUsd);
+      document.getElementById('treasury-cash').textContent = ITA.usd(trTotal);
+      const ethSubStr = trEthUsd > 0 ? ` (~${ITA.usd(trEthUsd)})` : '';
+      document.getElementById('treasury-gas').textContent = `${ITA.usd(tr.usdc || 0)} USDC + ${(tr.eth || 0).toFixed(4)} ETH${ethSubStr}`;
 
       // AI Strategist
       const ai = s.ai_strategist || {};
@@ -378,13 +382,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
 
       // Render 6 Agents Cards
-      renderAgents(s.agents || {}, s.allocation_plan?.allocations || {}, ai);
+      renderAgents(s.agents || {}, s.allocation_plan?.allocations || {}, ai, s.regime_data?.eth_price || 2690);
 
       // Render Allocation Table
       renderAllocTable(s.allocation_plan?.allocations || {}, ai);
     }
 
-    function renderAgents(agents, allocs, ai) {
+    function renderAgents(agents, allocs, ai, ethPrice = 2690) {
       const container = document.getElementById('agents-container');
       const html = Object.keys(agents).map(aid => {
         const a = agents[aid];
@@ -401,6 +405,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           : `<button onclick="toggleAgentPause('${aid}', true)" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; color: var(--warning); padding: 3px 8px; font-size: 11px; cursor: pointer;">⏸️ Pausa</button>`;
         const actualPct = (al.actual_pct ? (al.actual_pct * 100).toFixed(1) : 0);
         const targetPct = (al.target_pct ? (al.target_pct * 100).toFixed(1) : 0);
+        const gasEth = (a.gas_eth || 0);
+        const gasUsd = (a.gas_usd !== undefined) ? a.gas_usd : (gasEth * ethPrice);
+        const gasUsdStr = gasUsd > 0 ? ` (~${ITA.usd(gasUsd)})` : '';
 
         return `
           <div class="agent-card">
@@ -431,7 +438,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 12px; border-top: 1px solid var(--border); padding-top: 8px;">
               <span>Posizioni: <strong>${a.positions_count || 0}</strong></span>
-              <span>Gas ETH: <strong>${(a.gas_eth || 0).toFixed(4)}</strong></span>
+              <span>Gas ETH: <strong>${gasEth.toFixed(4)}</strong>${gasUsdStr}</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; gap: 6px;">
               <a href="${a.url || '#'}" target="_blank" style="font-size: 12px; text-decoration: none;">Apri Dashboard ↗</a>

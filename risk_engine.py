@@ -18,16 +18,24 @@ class RiskEngine:
     def evaluate_portfolio_risk(
         self,
         agents_status: Dict[str, Dict[str, Any]],
-        treasury_cash_usd: float = 0.0
+        treasury_cash_usd: float = 0.0,
+        treasury_eth: float = 0.0,
+        eth_price: float = 0.0
     ) -> Dict[str, Any]:
         """Analizza l'esposizione combinata e il rischio complessivo di tutti i bot."""
-        total_equity = treasury_cash_usd
+        treasury_eth_usd = round(treasury_eth * eth_price, 2) if eth_price > 0 else 0.0
+        total_treasury_usd = round(treasury_cash_usd + treasury_eth_usd, 2)
+        total_equity = total_treasury_usd
         net_long_usd = 0.0
         net_short_usd = 0.0
         warnings: List[str] = []
 
         for agent_id, st in agents_status.items():
             eq = float(st.get("equity_usd", 0.0) or st.get("balance_usd", 0.0) or 0.0)
+            gas_eth = float(st.get("gas_eth", 0.0) or 0.0)
+            gas_usd = round(gas_eth * eth_price, 2) if eth_price > 0 else 0.0
+            st["gas_usd"] = gas_usd
+            st["total_val_usd"] = round(eq + gas_usd, 2)
             total_equity += eq
             pos_list = st.get("positions", [])
 
@@ -131,6 +139,11 @@ class RiskEngine:
             "net_short_usd": round(net_short_usd, 2),
             "net_delta_usd": round(net_delta_usd, 2),
             "net_delta_ratio": round(net_delta_ratio, 4),
+            "treasury_total_usd": total_treasury_usd,
+            "treasury_usdc": round(treasury_cash_usd, 2),
+            "treasury_eth": round(treasury_eth, 5),
+            "treasury_eth_usd": treasury_eth_usd,
+            "eth_price": round(eth_price, 2),
             "circuit_breaker_active": circuit_breaker,
             "risk_level": risk_level,
             "warnings": warnings

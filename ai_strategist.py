@@ -141,9 +141,11 @@ class AiStrategist:
                     "role": "system",
                     "content": (
                         "Sei il Chief Investment Officer e Portfolio Manager dell'ecosistema di trading autonomo su Base L2. "
-                        "Analizza la situazione di mercato e la performance dei 6 bot subordinati (Perp, Yield, Neutral, LP, DCA, Degen). "
-                        "Il tuo obiettivo prioritario è proteggere il capitale, tagliare le strategie in perdita/drawdown e riallocare fondi "
-                        "verso le strategie più profittevoli o stabili. "
+                        "Analizza la situazione macro e la performance dei 6 bot subordinati (Perp, Yield, Neutral, LP, DCA, Degen). "
+                        "Il tuo obiettivo prioritario è proteggere il capitale, ottimizzare l'allocazione e far crescere il portafoglio. "
+                        "IMPORTANTE: I bot con equity a $0 e 0 posizioni NON sono falliti né liquidati: sono nodi operativi appena avviati in attesa di primo finanziamento. "
+                        "Se il regime lo consente, raccomanda di capitalizzarli attingendo dalla Master Treasury o dal surplus di strategie con peso in eccesso. "
+                        "Non considerare 'peggiore' o 'liquidata' una strategia solo perché la sua equity è attualmente a 0 per assenza di fondi iniziali. "
                         "Rispondi ESCLUSIVAMENTE in formato JSON valido senza codice markdown o testo introduttivo con questo schema esatto:\n"
                         "{\n"
                         '  "market_briefing": "Breve sintesi macro e di portafoglio in italiano (max 250 caratteri)",\n'
@@ -227,15 +229,21 @@ class AiStrategist:
             "fear_and_greed": f"{fg_val} ({fg_label})",
             "total_net_worth_usd": rdata.get("total_net_worth_usd", 0.0),
             "portfolio_pnl_24h_pct": rdata.get("pnl_24h_pct", 0.0),
-            "treasury_usdc": tbals.get("usdc", 0.0),
-            "treasury_eth": tbals.get("eth", 0.0),
+            "master_treasury": {
+                "usdc": tbals.get("usdc", 0.0),
+                "eth": tbals.get("eth", 0.0),
+                "eth_usd": tbals.get("eth_usd", 0.0),
+                "total_usd": tbals.get("total_usd", 0.0)
+            },
             "strategies_ranking": [
                 {
                     "id": r["agent_id"],
                     "name": r["name"],
                     "score": r["score"],
                     "equity": f"${r['equity_usd']:.2f}",
-                    "pnl": f"{r['pnl_pct']:+.1f}%"
+                    "gas_eth": f"{agents_status.get(r['agent_id'], {}).get('gas_eth', 0.0):.4f} ETH",
+                    "pnl": f"{r['pnl_pct']:+.1f}%",
+                    "status": "In attesa di primo finanziamento" if r['equity_usd'] == 0 and r.get('positions_count', 0) == 0 else "Operativo"
                 }
                 for r in rankings
             ]
