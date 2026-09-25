@@ -17,9 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Permessi di esecuzione per lo script di avvio
-RUN chmod +x start.sh
+# Rimuove eventuali terminazioni Windows (CRLF) e imposta i permessi di esecuzione
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 EXPOSE 3000
 
-CMD ["./start.sh"]
+CMD ["bash", "./start.sh"]
