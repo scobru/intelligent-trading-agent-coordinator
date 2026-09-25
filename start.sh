@@ -16,9 +16,8 @@ DASHBOARD_PID=$!
 
 # 2. Cleanup all'uscita
 cleanup() {
-    echo "Arresto servizi in background..."
+    echo "Arresto dashboard in background..."
     kill $DASHBOARD_PID 2>/dev/null || true
-    [ -n "$COORD_PID" ] && kill $COORD_PID 2>/dev/null || true
     exit 0
 }
 trap cleanup SIGTERM SIGINT
@@ -26,10 +25,15 @@ trap cleanup SIGTERM SIGINT
 # 3. Attesa avvio dashboard
 sleep 2
 
-# 4. Avvia loop periodico del Coordinator in primo piano
-echo "[2/3] Avvio ciclo continuo dell'Orchestratore..."
-python -u coordinator.py &
-COORD_PID=$!
+# 4. Loop periodico del Coordinator con gestione errori
+INTERVAL="${COORDINATOR_INTERVAL_SECONDS:-900}"
+echo "[2/3] Avvio ciclo dell'Orchestratore (intervallo: ${INTERVAL}s)..."
 
-echo "[3/3] Coordinator e Dashboard attivi con successo!"
-wait $COORD_PID
+while true; do
+    echo ""
+    echo "⏰ [$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Avvio ciclo Coordinator..."
+    python -u coordinator.py --once || echo "⚠️ Warning: ciclo coordinator terminato con errore, riprovo al prossimo intervallo."
+    echo "💤 In attesa per ${INTERVAL} secondi prima del prossimo ciclo..."
+    sleep "${INTERVAL}" &
+    wait $!
+done

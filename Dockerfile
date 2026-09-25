@@ -10,6 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gcc \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -18,8 +19,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Rimuove eventuali terminazioni Windows (CRLF) e imposta i permessi di esecuzione
-RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
+RUN dos2unix start.sh && chmod +x start.sh
+
+# Cartella per dati persistenti e database SQLite
+RUN mkdir -p /app/data
 
 EXPOSE 3000
 
-CMD ["bash", "./start.sh"]
+CMD ["/bin/bash", "./start.sh"]
