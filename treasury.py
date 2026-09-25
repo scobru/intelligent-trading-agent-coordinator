@@ -46,6 +46,7 @@ class Treasury:
         """Inizializza il file paper_treasury.json se in modalita' paper trading."""
         if not config.PAPER_TRADING:
             return
+        self.paper_file.parent.mkdir(parents=True, exist_ok=True)
         if not self.paper_file.exists():
             initial_state = {
                 "treasury_usdc": config.PAPER_START_USDC,

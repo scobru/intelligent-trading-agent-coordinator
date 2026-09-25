@@ -14,7 +14,12 @@ import config
 logger = logging.getLogger(__name__)
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.SQLITE_DB_PATH, timeout=15)
+    db_path = config.Path(config.SQLITE_DB_PATH) if hasattr(config, "Path") else None
+    if not db_path:
+        from pathlib import Path
+        db_path = Path(config.SQLITE_DB_PATH)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), timeout=15)
     conn.row_factory = sqlite3.Row
     return conn
 
