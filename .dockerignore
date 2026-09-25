@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+*.db
+*.sqlite
+data/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+paper_treasury.json

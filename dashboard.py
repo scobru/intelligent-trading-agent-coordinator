@@ -683,6 +683,7 @@ def run_dashboard():
     server = ThreadingHTTPServer((config.DASHBOARD_HOST, config.DASHBOARD_PORT), MasterDashboardHandler)
     logger.info("🌐 Master Coordinator Dashboard avviata su http://%s:%s",
                 config.DASHBOARD_HOST, config.DASHBOARD_PORT)
+    print(f"🚀 Master Coordinator Dashboard avviata su http://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
