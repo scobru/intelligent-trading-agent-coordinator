@@ -21,6 +21,9 @@ class AgentClient:
     def __init__(self):
         self.agents_config = config.AGENTS
         self.run_token = config.AGENT_RUN_TOKEN
+        self.http_user = getattr(config, "AGENT_HTTP_USER", "scobru")
+        self.http_pass = getattr(config, "AGENT_HTTP_PASS", self.run_token or "francos88")
+        self.auth = (self.http_user, self.http_pass) if (self.http_user and self.http_pass) else None
 
     def get_agent_status(self, agent_id: str) -> Dict[str, Any]:
         """Interroga un singolo agente via HTTP /api/status con fallback locale."""
@@ -50,7 +53,7 @@ class AgentClient:
         }
 
         try:
-            resp = requests.get(url, timeout=TIMEOUT_SECONDS)
+            resp = requests.get(url, auth=self.auth, timeout=TIMEOUT_SECONDS)
             if resp.status_code == 200:
                 raw = resp.json()
                 res_data["online"] = True
@@ -58,6 +61,15 @@ class AgentClient:
                 res_data["status"] = "online"
                 self._extract_metrics(res_data, raw, agent_id)
                 return res_data
+            elif resp.status_code == 401 and not self.auth and self.run_token:
+                resp = requests.get(url, auth=("scobru", self.run_token), timeout=TIMEOUT_SECONDS)
+                if resp.status_code == 200:
+                    raw = resp.json()
+                    res_data["online"] = True
+                    res_data["raw"] = raw
+                    res_data["status"] = "online"
+                    self._extract_metrics(res_data, raw, agent_id)
+                    return res_data
         except Exception as exc:
             logger.debug("Agente %s non raggiungibile via HTTP (%s). Tento fallback locale.", agent_id, exc)
 
@@ -67,80 +79,127 @@ class AgentClient:
 
     def _extract_metrics(self, res: Dict[str, Any], raw: Dict[str, Any], agent_id: str) -> None:
         """Estrae in modo uniforme balance, equity e gas dalle diverse strutture delle dashboard."""
-        meta = raw.get("meta", {})
-        wallet_info = meta.get("wallet", {})
+        meta = raw.get("meta", {}) if isinstance(raw.get("meta"), dict) else {}
+        wallet_info = meta.get("wallet", {}) if isinstance(meta.get("wallet"), dict) else {}
+        st = raw.get("status", {}) if isinstance(raw.get("status"), dict) else {}
+        balances = raw.get("balances", {}) if isinstance(raw.get("balances"), dict) else {}
+        paper = raw.get("paper", {}) if isinstance(raw.get("paper"), dict) else {}
+        if not paper and "paper" in meta and isinstance(meta["paper"], dict):
+            paper = meta["paper"]
 
         # Stato pausa
-        res["is_paused"] = bool(raw.get("is_paused", False))
-        res["pause_info"] = raw.get("pause_info", {})
+        res["is_paused"] = bool(raw.get("is_paused", False) or st.get("is_paused", False))
+        res["pause_info"] = raw.get("pause_info", {}) or st.get("pause_info", {})
 
         # Estrazione wallet
         if not res["wallet"]:
-            res["wallet"] = wallet_info.get("address", "") or raw.get("wallet_address", "")
+            res["wallet"] = (
+                wallet_info.get("address", "")
+                or raw.get("wallet", "")
+                or st.get("wallet", "")
+                or raw.get("wallet_address", "")
+                or ""
+            )
 
         # Estrazione Gas ETH
-        if "eth" in wallet_info:
+        gas = None
+        if "eth" in wallet_info and wallet_info["eth"] is not None:
+            gas = wallet_info["eth"]
+        elif "eth_balance" in raw and raw["eth_balance"] is not None:
+            gas = raw["eth_balance"]
+        elif "eth_balance" in st and st["eth_balance"] is not None:
+            gas = st["eth_balance"]
+        elif "ETH" in balances and balances["ETH"] is not None:
+            gas = balances["ETH"]
+        elif "gas_eth" in raw and raw["gas_eth"] is not None:
+            gas = raw["gas_eth"]
+
+        if gas is not None:
             try:
-                res["gas_eth"] = float(wallet_info["eth"])
-            except (ValueError, TypeError):
-                pass
-        elif "gas_eth" in raw:
-            try:
-                res["gas_eth"] = float(raw["gas_eth"])
+                res["gas_eth"] = float(gas)
             except (ValueError, TypeError):
                 pass
 
         # Estrazione Balance & Equity in base alla specifica implementazione del bot
         if agent_id == "perp":
             # intelligent-trading-agent
-            res["balance_usd"] = float(raw.get("balance_usd", 0.0) or 0.0)
-            res["equity_usd"] = float(raw.get("total_value_usd", res["balance_usd"]) or res["balance_usd"])
+            # Chiavi: balance, total_value, meta.paper.value_usd
+            bal = float(raw.get("balance", 0.0) or 0.0)
+            tot = float(raw.get("total_value", 0.0) or 0.0)
+            if not tot and paper:
+                tot = float(paper.get("value_usd", 0.0) or bal)
+            res["balance_usd"] = bal
+            res["equity_usd"] = tot if tot > 0 else bal
             pos = raw.get("positions", [])
             res["positions"] = pos
             res["positions_count"] = len(pos)
 
         elif agent_id == "yield":
             # intelligent-trading-agent-yield
-            res["balance_usd"] = float(raw.get("unallocated_usdc", 0.0) or raw.get("balance_usd", 0.0) or 0.0)
-            res["equity_usd"] = float(raw.get("total_value_usd", 0.0) or res["balance_usd"])
-            pos = raw.get("active_positions", []) or raw.get("positions", [])
+            # Chiavi: status.idle_usd, status.usdc_balance, status.total_value_usd, status.positions
+            bal = float(st.get("idle_usd", 0.0) or st.get("usdc_balance", 0.0) or raw.get("balance_usd", 0.0) or 0.0)
+            tot = float(st.get("total_value_usd", 0.0) or raw.get("total_value_usd", 0.0) or bal)
+            if not tot and paper:
+                tot = float(paper.get("value_usd", 0.0) or bal)
+            res["balance_usd"] = bal
+            res["equity_usd"] = tot
+            pos = st.get("positions", []) or raw.get("positions", [])
             res["positions"] = pos
             res["positions_count"] = len(pos)
 
         elif agent_id == "neutral":
             # intelligent-trading-agent-neutral
-            res["balance_usd"] = float(raw.get("free_usdc", 0.0) or raw.get("balance_usd", 0.0) or 0.0)
-            res["equity_usd"] = float(raw.get("total_value_usd", 0.0) or res["balance_usd"])
-            pos = raw.get("pairs", []) or raw.get("positions", [])
+            # Chiavi: status.idle_usd, status.usdc_balance, status.total_value_usd, status.positions
+            bal = float(st.get("idle_usd", 0.0) or st.get("usdc_balance", 0.0) or raw.get("balance_usd", 0.0) or 0.0)
+            tot = float(st.get("total_value_usd", 0.0) or raw.get("total_value_usd", 0.0) or bal)
+            res["balance_usd"] = bal
+            res["equity_usd"] = tot
+            pos = st.get("positions", []) or raw.get("positions", [])
             res["positions"] = pos
             res["positions_count"] = len(pos)
 
         elif agent_id == "lp":
             # intelligent-trading-agent-lp
-            res["balance_usd"] = float(raw.get("free_usd", 0.0) or raw.get("balance_usd", 0.0) or 0.0)
-            res["equity_usd"] = float(raw.get("total_value_usd", 0.0) or res["balance_usd"])
-            pos = raw.get("positions", [])
-            res["positions"] = pos
-            res["positions_count"] = len(pos)
+            # Chiavi: balances (USDC, WETH, ETH), position (current_lp_value_usd), current_price
+            usdc_bal = float(balances.get("USDC", 0.0) or 0.0)
+            res["balance_usd"] = usdc_bal
+            pos_eval = raw.get("position", {}) if isinstance(raw.get("position"), dict) else {}
+            lp_val = float(pos_eval.get("current_lp_value_usd", 0.0) or 0.0)
+            px = float(raw.get("current_price", 0.0) or 0.0)
+            weth_val = float(balances.get("WETH", 0.0) or 0.0) * px
+            if paper:
+                res["equity_usd"] = float(paper.get("equity_usd", 0.0) or (usdc_bal + lp_val + weth_val))
+            else:
+                res["equity_usd"] = usdc_bal + lp_val + weth_val
+            pos_list = [pos_eval] if pos_eval.get("has_position") else []
+            res["positions"] = pos_list
+            res["positions_count"] = len(pos_list)
 
         elif agent_id == "dca":
             # intelligent-trading-agent-dca
-            p = raw.get("portfolio", {})
-            res["balance_usd"] = float(p.get("USDC", {}).get("value_usd", 0.0) or 0.0)
-            res["equity_usd"] = float(raw.get("total_value_usd", 0.0) or res["balance_usd"])
-            res["positions_count"] = len([k for k, v in p.items() if k != "USDC" and float(v.get("value_usd", 0.0)) > 1.0])
+            # Chiavi: total_value_usd, balances (USDC, WETH, ...), portfolio.assets
+            bal = float(balances.get("USDC", 0.0) or 0.0)
+            res["balance_usd"] = bal
+            res["equity_usd"] = float(raw.get("total_value_usd", 0.0) or bal)
+            assets = raw.get("portfolio", {}).get("assets", {}) if isinstance(raw.get("portfolio"), dict) else {}
+            pos_list = [v for k, v in assets.items() if float(v.get("value_usd", 0.0)) > 1.0]
+            res["positions"] = pos_list
+            res["positions_count"] = len(pos_list)
 
         elif agent_id == "degen":
             # intelligent-trading-agent-degen
-            res["balance_usd"] = float(raw.get("free_usdc", 0.0) or raw.get("balance_usd", 0.0) or 0.0)
-            res["equity_usd"] = float(raw.get("total_value_usd", 0.0) or res["balance_usd"])
+            # Chiavi: total_value, balance, usdc_balance, positions
+            bal = float(raw.get("usdc_balance", 0.0) or raw.get("balance", 0.0) or 0.0)
+            tot = float(raw.get("total_value", 0.0) or raw.get("balance", 0.0) or bal)
+            res["balance_usd"] = bal
+            res["equity_usd"] = tot
             pos = raw.get("positions", [])
             res["positions"] = pos
             res["positions_count"] = len(pos)
 
         else:
-            res["balance_usd"] = float(raw.get("balance_usd", 0.0) or 0.0)
-            res["equity_usd"] = float(raw.get("total_value_usd", res["balance_usd"]) or res["balance_usd"])
+            res["balance_usd"] = float(raw.get("balance_usd", raw.get("balance", 0.0)) or 0.0)
+            res["equity_usd"] = float(raw.get("total_value_usd", raw.get("total_value", res["balance_usd"])) or res["balance_usd"])
 
     def _local_disk_fallback(self, res: Dict[str, Any], agent_id: str) -> None:
         """Legge lo stato dai file persistenti se la dashboard HTTP del bot e' offline."""
@@ -243,7 +302,7 @@ class AgentClient:
             headers["X-Admin-Token"] = self.run_token
 
         try:
-            resp = requests.post(url, headers=headers, timeout=TIMEOUT_SECONDS)
+            resp = requests.post(url, headers=headers, auth=self.auth, timeout=TIMEOUT_SECONDS)
             if resp.status_code in (200, 202):
                 data = {}
                 try:
@@ -277,7 +336,7 @@ class AgentClient:
 
         payload = {"reason": reason or "Pausa richiesta dal Coordinator"}
         try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=TIMEOUT_SECONDS)
+            resp = requests.post(url, json=payload, headers=headers, auth=self.auth, timeout=TIMEOUT_SECONDS)
             if resp.status_code == 200:
                 return {"status": "success", "agent_id": agent_id, "is_paused": True, "message": f"Bot {agent_id} in pausa"}
             return {"status": "error", "code": resp.status_code, "message": resp.text}
@@ -298,7 +357,7 @@ class AgentClient:
             headers["X-Admin-Token"] = self.run_token
 
         try:
-            resp = requests.post(url, headers=headers, timeout=TIMEOUT_SECONDS)
+            resp = requests.post(url, headers=headers, auth=self.auth, timeout=TIMEOUT_SECONDS)
             if resp.status_code == 200:
                 return {"status": "success", "agent_id": agent_id, "is_paused": False, "message": f"Bot {agent_id} riattivato"}
             return {"status": "error", "code": resp.status_code, "message": resp.text}
