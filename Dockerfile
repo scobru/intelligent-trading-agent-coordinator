@@ -2,6 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Disabilita il buffering dell'output Python per visualizzare i log in tempo reale in Docker
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
 # Dipendenze di sistema minime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \

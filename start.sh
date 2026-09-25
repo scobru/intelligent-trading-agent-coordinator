@@ -5,10 +5,13 @@ echo "========================================================"
 echo " Starting Intelligent Trading Agent - Master Coordinator"
 echo "========================================================"
 
+# Assicura unbuffered per Python e visualizzazione immediata dei log
+export PYTHONUNBUFFERED=1
+
 # 1. Avvia Web Dashboard su porta 3000 (o $PORT)
 DASHBOARD_PORT="${PORT:-${DASHBOARD_PORT:-3000}}"
 echo "[1/3] Avvio Web Dashboard su porta ${DASHBOARD_PORT}..."
-python dashboard.py &
+python -u dashboard.py &
 DASHBOARD_PID=$!
 
 # 2. Cleanup all'uscita
@@ -25,7 +28,7 @@ sleep 2
 
 # 4. Avvia loop periodico del Coordinator in primo piano
 echo "[2/3] Avvio ciclo continuo dell'Orchestratore..."
-python coordinator.py &
+python -u coordinator.py &
 COORD_PID=$!
 
 echo "[3/3] Coordinator e Dashboard attivi con successo!"

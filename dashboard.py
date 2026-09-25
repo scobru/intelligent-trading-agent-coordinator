@@ -25,7 +25,12 @@ import config
 import db_utils
 from coordinator import Coordinator
 
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("dashboard")
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 STATIC_ROUTES = {
