@@ -35,7 +35,18 @@ class RiskEngine:
             if agent_id == "dca":
                 # Lo spot accumulato (WETH, cbBTC) e' interamente Long
                 p = st.get("raw", {}).get("portfolio", {})
-                crypto_val = sum(float(v.get("value_usd", 0.0)) for k, v in p.items() if k != "USDC")
+                assets = p.get("assets", p) if isinstance(p, dict) else {}
+                crypto_val = 0.0
+                if isinstance(assets, dict):
+                    for k, v in assets.items():
+                        if k == "USDC":
+                            continue
+                        if isinstance(v, dict):
+                            crypto_val += float(v.get("value_usd", 0.0) or 0.0)
+                        elif isinstance(v, (int, float)):
+                            crypto_val += float(v)
+                elif isinstance(p, (int, float)):
+                    crypto_val = float(p)
                 net_long_usd += crypto_val
 
             elif agent_id == "degen":
@@ -45,6 +56,8 @@ class RiskEngine:
             elif agent_id == "perp":
                 # Posizioni perpetual su SynFutures: direzionali Long o Short
                 for p in pos_list:
+                    if not isinstance(p, dict):
+                        continue
                     direction = str(p.get("direction", "")).upper()
                     val = float(p.get("notional_usd", p.get("size_usd", 0.0)) or 0.0)
                     if direction == "LONG":

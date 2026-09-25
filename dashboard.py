@@ -576,10 +576,21 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
                     pass
 
             if not _latest_status_cache and self.coordinator:
-                _latest_status_cache = self.coordinator.run_cycle()
+                try:
+                    _latest_status_cache = self.coordinator.run_cycle()
+                except Exception as exc:
+                    logger.error("Errore run_cycle durante /api/status: %s", exc)
+                    _latest_status_cache = {
+                        "error": str(exc),
+                        "total_net_worth_usd": 0.0,
+                        "regime": "BALANCED",
+                        "agents": {},
+                        "treasury": {}
+                    }
 
-            _latest_status_cache["mode"] = "paper" if config.PAPER_TRADING else ("dry_run" if config.DRY_RUN else "live")
-            self._json(200, _latest_status_cache)
+            if _latest_status_cache:
+                _latest_status_cache["mode"] = "paper" if config.PAPER_TRADING else ("dry_run" if config.DRY_RUN else "live")
+            self._json(200, _latest_status_cache or {})
             return
 
         if path == "/api/snapshots":
