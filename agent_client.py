@@ -402,3 +402,33 @@ class AgentClient:
                 except Exception as exc:
                     results[aid] = {"status": "error", "message": str(exc)}
         return results
+
+    def release_agent_funds(self, agent_id: str, amount_usd: float = 0.0) -> Dict[str, Any]:
+        """
+        Invia un POST /api/release_funds all'agente subordinato per vendere token allocati
+        (es. Degen) o chiudere posizioni e ritirare margine da Gate (es. SynFutures/Perp),
+        rendendo disponibile liquidita' USDC nel wallet.
+        """
+        cfg = self.agents_config.get(agent_id)
+        if not cfg:
+            return {"status": "error", "message": f"Agente '{agent_id}' inesistente"}
+
+        url = f"{cfg['url'].rstrip('/')}/api/release_funds"
+        headers = {"Content-Type": "application/json"}
+        if self.run_token:
+            headers["Authorization"] = f"Bearer {self.run_token}"
+            headers["X-Run-Token"] = self.run_token
+            headers["X-Admin-Token"] = self.run_token
+
+        payload = {"amount_usd": round(amount_usd, 2)}
+        try:
+            resp = requests.post(url, json=payload, headers=headers, auth=self.auth, timeout=30.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                logger.info("✅ Svincolo fondi riuscito per %s: %s", agent_id, data)
+                return {"status": "success", "agent_id": agent_id, "data": data}
+            return {"status": "error", "code": resp.status_code, "message": resp.text}
+        except Exception as exc:
+            logger.error("Eccezione durante svincolo fondi per %s: %s", agent_id, exc)
+            return {"status": "error", "message": str(exc)}
+

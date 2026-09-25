@@ -220,7 +220,7 @@ class Treasury:
         logger.info("Trasferimento USDC completato da %s verso %s: %s", account.address, to_address, h_str)
         return h_str
 
-    def execute_rebalance_action(self, action: Dict[str, Any], agents_status: Dict[str, Any]) -> bool:
+    def execute_rebalance_action(self, action: Dict[str, Any], agents_status: Dict[str, Any], agent_client: Optional[Any] = None) -> bool:
         """Esegue una specifica azione calcolata dal CapitalAllocator."""
         from_id = action.get("from_agent")
         to_id = action.get("to_agent")
@@ -317,6 +317,20 @@ class Treasury:
             raw_usdc = self.usdc_contract.functions.balanceOf(account.address).call()
             avail_usdc = float(raw_usdc) / 1e6
             min_reb = min(config.MIN_REBALANCE_USD, 5.0)
+
+            # Se il mittente è un sub-agent e non ha abbastanza USDC liquidi nel wallet:
+            # tenta di liberare fondi vendendo token (es. Degen) o chiudendo/ritirando da Gate (es. Perp)
+            if from_id != "master_treasury" and avail_usdc < amount:
+                client = agent_client or getattr(self, "agent_client", None)
+                if client:
+                    needed = round(amount - avail_usdc, 2)
+                    logger.info("ℹ️ %s ha solo $%.2f USDC liquidi (richiesti: $%.2f). Invio richiesta di svincolo fondi ($%.2f)...",
+                                sender_name, avail_usdc, amount, needed)
+                    release_res = client.release_agent_funds(from_id, needed)
+                    logger.info("   -> Risultato svincolo fondi da %s: %s", from_id, release_res)
+                    time.sleep(3)  # Attesa conferma transazione e sincronizzazione on-chain
+                    raw_usdc = self.usdc_contract.functions.balanceOf(account.address).call()
+                    avail_usdc = float(raw_usdc) / 1e6
 
             if avail_usdc < min_reb:
                 warn_msg = (

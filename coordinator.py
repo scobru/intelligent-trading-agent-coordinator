@@ -46,6 +46,7 @@ class Coordinator:
         db_utils.init_db()
         self.treasury = Treasury()
         self.agent_client = AgentClient()
+        self.treasury.agent_client = self.agent_client
         self.regime_detector = RegimeDetector()
         self.ai_strategist = AiStrategist()
         self.capital_allocator = CapitalAllocator()
@@ -149,7 +150,7 @@ class Coordinator:
             if config.AUTO_REBALANCE and not risk_data["circuit_breaker_active"]:
                 logger.info("   -> AUTO_REBALANCE attivo. Esecuzione trasferimenti...")
                 for act in alloc_plan["actions"]:
-                    ok = self.treasury.execute_rebalance_action(act, agents_status)
+                    ok = self.treasury.execute_rebalance_action(act, agents_status, agent_client=self.agent_client)
                     if ok:
                         executed_actions += 1
             else:

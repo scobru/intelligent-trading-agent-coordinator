@@ -443,6 +443,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; gap: 6px;">
               <a href="${a.url || '#'}" target="_blank" style="font-size: 12px; text-decoration: none;">Apri Dashboard ↗</a>
               <div style="display: flex; gap: 6px;">
+                <button onclick="releaseAgentFunds('${aid}')" title="Svincola liquidità USDC (vende token o ritira da Gate)" style="background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.4); border-radius: 6px; color: var(--primary); padding: 3px 8px; font-size: 11px; cursor: pointer; font-weight: 500;">💸 Libera USDC</button>
                 ${pauseBtn}
                 <button onclick="triggerAgentRun('${aid}')" ${a.is_paused ? 'disabled style="opacity: 0.5; cursor: not-allowed; padding: 3px 8px; font-size: 11px; border-radius: 6px;" title="Bot in pausa"' : 'style="background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 3px 8px; font-size: 11px; cursor: pointer;"'}>Avvia Ciclo</button>
               </div>
@@ -613,6 +614,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }
       } catch(e) {
         alert('Errore: ' + e);
+      }
+    }
+
+    async function releaseAgentFunds(aid) {
+      if (!confirm(`Vuoi richiedere a ${aid.toUpperCase()} di svincolare capitale (vendere token o ritirare da Gate) per liberare USDC?`)) return;
+      try {
+        const res = await fetch('/api/agent_release_funds/' + aid, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ amount_usd: 0 })
+        }).then(r => r.json());
+        if (res.status === 'success') {
+          const detail = res.data?.message || (res.data ? JSON.stringify(res.data) : 'Fondi svincolati con successo.');
+          alert(`Svincolo riuscito per ${aid.toUpperCase()}:\n${detail}`);
+          setTimeout(refresh, 2000);
+        } else {
+          alert('Errore svincolo: ' + (res.message || JSON.stringify(res)));
+        }
+      } catch(e) {
+        alert('Errore chiamata svincolo: ' + e);
       }
     }
 
@@ -810,6 +831,24 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
             aid = path.replace("/api/agent_resume/", "").strip()
             if self.coordinator:
                 res = self.coordinator.agent_client.resume_agent(aid)
+                self._json(200, res)
+            else:
+                self._json(500, {"error": "Coordinator non inizializzato"})
+            return
+
+        if path.startswith("/api/agent_release_funds/"):
+            aid = path.replace("/api/agent_release_funds/", "").strip()
+            amount_usd = 0.0
+            try:
+                clen = int(self.headers.get("Content-Length", 0))
+                if clen > 0:
+                    body = json.loads(self.rfile.read(clen).decode("utf-8"))
+                    amount_usd = float(body.get("amount_usd", 0.0) or 0.0)
+            except Exception:
+                pass
+            coord = self.coordinator or _coordinator_instance
+            if coord:
+                res = coord.agent_client.release_agent_funds(aid, amount_usd)
                 self._json(200, res)
             else:
                 self._json(500, {"error": "Coordinator non inizializzato"})
