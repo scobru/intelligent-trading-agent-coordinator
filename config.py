@@ -122,6 +122,24 @@ AGENT_RUN_TOKEN = os.getenv("AGENT_RUN_TOKEN", os.getenv("DASHBOARD_RUN_TOKEN", 
 AGENT_HTTP_USER = os.getenv("AGENT_HTTP_USER", os.getenv("HTTP_BASIC_USER", "scobru")).strip()
 AGENT_HTTP_PASS = os.getenv("AGENT_HTTP_PASS", os.getenv("HTTP_BASIC_PASS", AGENT_RUN_TOKEN or "francos88")).strip()
 
+# Chiavi private opzionali per i sub-agenti (Cross-Bot Gas Sharing)
+SUB_AGENTS_PRIVATE_KEY = os.getenv("SUB_AGENTS_PRIVATE_KEY", "").strip()
+
+def get_agent_private_key(agent_id: str) -> str:
+    """Ritorna la chiave privata di un agente (se disponibile) per trasferimenti diretti o cross-bot gas refuel."""
+    env_var_name = f"AGENT_{agent_id.upper()}_PRIVATE_KEY"
+    pk = os.getenv(env_var_name, "").strip()
+    if pk:
+        return pk
+    if SUB_AGENTS_PRIVATE_KEY:
+        return SUB_AGENTS_PRIVATE_KEY
+    cfg = AGENTS.get(agent_id, {})
+    agent_wallet = cfg.get("wallet", "").strip().lower()
+    master_wallet = MASTER_WALLET_ADDRESS.strip().lower()
+    if agent_wallet and master_wallet and agent_wallet == master_wallet and MASTER_PRIVATE_KEY:
+        return MASTER_PRIVATE_KEY
+    return ""
+
 # --- Matrici di Allocazione Target per Regime (%) ---
 # Somma sempre 100% (1.00)
 REGIME_TARGET_WEIGHTS = {

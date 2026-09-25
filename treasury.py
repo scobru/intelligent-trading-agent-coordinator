@@ -139,6 +139,38 @@ class Treasury:
         logger.info("Trasferimento ETH completato: %s (tx: %s)", to_address, h_str)
         return h_str
 
+    def transfer_eth_from_wallet(self, from_private_key: str, to_address: str, amount_eth: float) -> Optional[str]:
+        """Invia ETH nativo da uno specifico wallet subordinato a un altro (Cross-Bot Gas Sharing)."""
+        if config.PAPER_TRADING or config.DRY_RUN:
+            logger.info("[PAPER/DRY-RUN] Trasferiti %.5f ETH tra sub-wallets -> %s", amount_eth, to_address)
+            return "0x_simulated_cross_bot_eth_tx"
+
+        if not from_private_key:
+            raise ValueError("Chiave privata del wallet mittente non configurata.")
+
+        account = Account.from_key(from_private_key)
+        to_check = Web3.to_checksum_address(to_address)
+        val_wei = Web3.to_wei(amount_eth, "ether")
+
+        nonce = self.w3.eth.get_transaction_count(account.address, "pending")
+        gas_price = self.w3.eth.gas_price
+
+        tx = {
+            "to": to_check,
+            "value": val_wei,
+            "gas": 21000,
+            "gasPrice": gas_price,
+            "nonce": nonce,
+            "chainId": config.CHAIN_ID
+        }
+
+        signed = self.w3.eth.account.sign_transaction(tx, from_private_key)
+        raw_tx = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
+        tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
+        h_str = tx_hash.hex()
+        logger.info("Trasferimento gas tra bot completato: %s -> %s (tx: %s)", account.address, to_address, h_str)
+        return h_str
+
     def transfer_usdc(self, to_address: str, amount_usd: float) -> Optional[str]:
         """Trasferisce USDC su Base L2."""
         if config.PAPER_TRADING:
