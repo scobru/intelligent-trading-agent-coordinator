@@ -20,15 +20,19 @@ from regime_detector import RegimeDetector
 from risk_engine import RiskEngine
 from treasury import Treasury
 
-# Configurazione UTF-8 per console Windows
-if sys.platform == "win32":
+# Configurazione UTF-8 universale (Windows e Linux Docker)
+if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
 
-# Configurazione logging
+# Configurazione logging con flush immediato su sys.stdout
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",

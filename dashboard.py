@@ -14,9 +14,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from typing import Any, Dict
 
-if sys.platform == "win32":
+if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
@@ -680,16 +684,39 @@ def run_dashboard():
     _coordinator_instance = Coordinator()
     MasterDashboardHandler.coordinator = _coordinator_instance
 
-    server = ThreadingHTTPServer((config.DASHBOARD_HOST, config.DASHBOARD_PORT), MasterDashboardHandler)
-    logger.info("🌐 Master Coordinator Dashboard avviata su http://%s:%s",
-                config.DASHBOARD_HOST, config.DASHBOARD_PORT)
-    print(f"🚀 Master Coordinator Dashboard avviata su http://{config.DASHBOARD_HOST}:{config.DASHBOARD_PORT}", flush=True)
+    ports_to_listen = [config.DASHBOARD_PORT]
+    if config.DASHBOARD_PORT != 3000:
+        ports_to_listen.append(3000)
+
+    servers = []
+    for port in ports_to_listen:
+        try:
+            srv = ThreadingHTTPServer((config.DASHBOARD_HOST, port), MasterDashboardHandler)
+            print(f"🚀 Master Coordinator Dashboard attiva su http://{config.DASHBOARD_HOST}:{port}", flush=True)
+            logger.info("🌐 Master Coordinator Dashboard avviata su http://%s:%s", config.DASHBOARD_HOST, port)
+            servers.append(srv)
+        except Exception as exc:
+            print(f"⚠️ Impossibile avviare dashboard su porta {port}: {exc}", flush=True)
+
+    if not servers:
+        raise RuntimeError("Impossibile avviare il server HTTP su nessuna porta.")
+
+    threads = []
+    for srv in servers[1:]:
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        threads.append(t)
+
     try:
-        server.serve_forever()
+        servers[0].serve_forever()
     except KeyboardInterrupt:
         logger.info("Chiusura dashboard...")
     finally:
-        server.server_close()
+        for srv in servers:
+            try:
+                srv.server_close()
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     run_dashboard()

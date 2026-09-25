@@ -189,7 +189,7 @@ EMERGENCY_HALT_DEGEN_ON_PANIC = _b("EMERGENCY_HALT_DEGEN_ON_PANIC", True)
 
 # --- Master Dashboard ---
 DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "0.0.0.0")
-DASHBOARD_PORT = _i("PORT", _i("DASHBOARD_PORT", 3000))
+DASHBOARD_PORT = _i("DASHBOARD_PORT", _i("PORT", 3000))
 DASHBOARD_RUN_TOKEN = os.getenv("DASHBOARD_RUN_TOKEN", "")
 
 # --- Master Telegram Bot ---
@@ -197,5 +197,11 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 # --- Database ---
-SQLITE_DB_PATH = os.getenv("SQLITE_DB_PATH", str(BASE_DIR / "coordinator.db"))
+_raw_db = os.getenv("SQLITE_DB_PATH", str(BASE_DIR / "coordinator.db")).strip()
+if _raw_db == "app/data/coordinator.db" and Path("/app/data").exists():
+    SQLITE_DB_PATH = "/app/data/coordinator.db"
+elif _raw_db and not os.path.isabs(_raw_db) and Path("/app").exists():
+    SQLITE_DB_PATH = str(Path("/app") / _raw_db)
+else:
+    SQLITE_DB_PATH = _raw_db
 PAPER_ACCOUNT_FILE = str(BASE_DIR / "paper_treasury.json")
