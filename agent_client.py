@@ -44,6 +44,8 @@ class AgentClient:
             "positions_count": 0,
             "positions": [],
             "status": "offline",
+            "is_paused": False,
+            "pause_info": {},
             "raw": {}
         }
 
@@ -67,6 +69,10 @@ class AgentClient:
         """Estrae in modo uniforme balance, equity e gas dalle diverse strutture delle dashboard."""
         meta = raw.get("meta", {})
         wallet_info = meta.get("wallet", {})
+
+        # Stato pausa
+        res["is_paused"] = bool(raw.get("is_paused", False))
+        res["pause_info"] = raw.get("pause_info", {})
 
         # Estrazione wallet
         if not res["wallet"]:
@@ -147,18 +153,24 @@ class AgentClient:
             return
 
         # Cerca file tipici di stato paper o live
-        paper_file = repo_dir / "paper_account.json"
+        paper_candidates = ["paper_account.json", "paper_portfolio.json", "paper_lp.json"]
         pos_file = repo_dir / "positions.json"
 
-        if paper_file.exists():
-            try:
-                with open(paper_file, "r", encoding="utf-8") as f:
-                    pdata = json.load(f)
-                    res["balance_usd"] = float(pdata.get("balance", pdata.get("collateral", 0.0)))
-                    res["equity_usd"] = float(pdata.get("equity", res["balance_usd"]))
-                    res["status"] = "offline (cached state)"
-            except Exception:
-                pass
+        for p_name in paper_candidates:
+            p_file = repo_dir / p_name
+            if p_file.exists():
+                try:
+                    with open(p_file, "r", encoding="utf-8") as f:
+                        pdata = json.load(f)
+                        b_val = float(pdata.get("balance", pdata.get("collateral", pdata.get("initial_usdc", 0.0))))
+                        if "balances" in pdata and isinstance(pdata["balances"], dict):
+                            b_val = float(pdata["balances"].get("USDC", b_val))
+                        res["balance_usd"] = b_val
+                        res["equity_usd"] = float(pdata.get("equity", pdata.get("total_value_usd", b_val)))
+                        res["status"] = "offline (cached state)"
+                        break
+                except Exception:
+                    pass
 
         if pos_file.exists():
             try:
@@ -172,6 +184,23 @@ class AgentClient:
                         res["positions_count"] = len(pos)
             except Exception:
                 pass
+
+        # Verifica stato pausa da SQLite locale
+        db_candidates = ["trading.db", "yield_agent.db", "neutral_agent.db", "lp_agent.db", "dca_agent.db", "degen_agent.db"]
+        for db_name in db_candidates:
+            db_file = repo_dir / db_name
+            if db_file.exists():
+                try:
+                    import sqlite3
+                    with sqlite3.connect(str(db_file), timeout=1.0) as conn:
+                        cur = conn.cursor()
+                        cur.execute("SELECT value FROM bot_control WHERE key = 'is_paused';")
+                        row = cur.fetchone()
+                        if row:
+                            res["is_paused"] = str(row[0]).lower() in ("1", "true", "yes")
+                except Exception:
+                    pass
+                break
 
     def get_all_statuses(self) -> Dict[str, Dict[str, Any]]:
         """Recupera contemporaneamente lo stato di tutti i 6 agenti in parallelo."""
@@ -210,11 +239,18 @@ class AgentClient:
         headers = {}
         if self.run_token:
             headers["Authorization"] = f"Bearer {self.run_token}"
+            headers["X-Run-Token"] = self.run_token
+            headers["X-Admin-Token"] = self.run_token
 
         try:
             resp = requests.post(url, headers=headers, timeout=TIMEOUT_SECONDS)
             if resp.status_code in (200, 202):
-                return {"status": "success", "message": f"Ciclo avviato per {agent_id}"}
+                data = {}
+                try:
+                    data = resp.json()
+                except Exception:
+                    pass
+                return {"status": "success", "message": data.get("message", f"Ciclo avviato per {agent_id}"), "data": data}
             return {"status": "error", "code": resp.status_code, "message": resp.text}
         except Exception as exc:
             return {"status": "error", "message": str(exc)}
@@ -224,4 +260,81 @@ class AgentClient:
         results = {}
         for agent_id in self.agents_config.keys():
             results[agent_id] = self.trigger_agent_run(agent_id)
+        return results
+
+    def pause_agent(self, agent_id: str, reason: str = "") -> Dict[str, Any]:
+        """Invia un POST /api/pause all'agente specificato per sospenderne l'attivita'."""
+        cfg = self.agents_config.get(agent_id)
+        if not cfg:
+            return {"status": "error", "message": f"Agente '{agent_id}' inesistente"}
+
+        url = f"{cfg['url'].rstrip('/')}/api/pause"
+        headers = {"Content-Type": "application/json"}
+        if self.run_token:
+            headers["Authorization"] = f"Bearer {self.run_token}"
+            headers["X-Run-Token"] = self.run_token
+            headers["X-Admin-Token"] = self.run_token
+
+        payload = {"reason": reason or "Pausa richiesta dal Coordinator"}
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=TIMEOUT_SECONDS)
+            if resp.status_code == 200:
+                return {"status": "success", "agent_id": agent_id, "is_paused": True, "message": f"Bot {agent_id} in pausa"}
+            return {"status": "error", "code": resp.status_code, "message": resp.text}
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def resume_agent(self, agent_id: str) -> Dict[str, Any]:
+        """Invia un POST /api/resume all'agente specificato per ripristinarne l'attivita'."""
+        cfg = self.agents_config.get(agent_id)
+        if not cfg:
+            return {"status": "error", "message": f"Agente '{agent_id}' inesistente"}
+
+        url = f"{cfg['url'].rstrip('/')}/api/resume"
+        headers = {}
+        if self.run_token:
+            headers["Authorization"] = f"Bearer {self.run_token}"
+            headers["X-Run-Token"] = self.run_token
+            headers["X-Admin-Token"] = self.run_token
+
+        try:
+            resp = requests.post(url, headers=headers, timeout=TIMEOUT_SECONDS)
+            if resp.status_code == 200:
+                return {"status": "success", "agent_id": agent_id, "is_paused": False, "message": f"Bot {agent_id} riattivato"}
+            return {"status": "error", "code": resp.status_code, "message": resp.text}
+        except Exception as exc:
+            return {"status": "error", "message": str(exc)}
+
+    def emergency_stop_all(self, reason: str = "Circuit Breaker attivato dal Coordinator") -> Dict[str, Any]:
+        """Invia /api/pause a tutti i bot simultaneamente (Circuit Breaker / Emergency Stop)."""
+        logger.warning("🚨 EMERGENCY STOP su tutti i bot! Motivo: %s", reason)
+        results = {}
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {
+                executor.submit(self.pause_agent, aid, reason): aid
+                for aid in self.agents_config.keys()
+            }
+            for fut in as_completed(futures):
+                aid = futures[fut]
+                try:
+                    results[aid] = fut.result()
+                except Exception as exc:
+                    results[aid] = {"status": "error", "message": str(exc)}
+        return results
+
+    def resume_all(self) -> Dict[str, Any]:
+        """Invia /api/resume a tutti i bot simultaneamente per riattivare l'ecosistema."""
+        logger.info("🟢 Ripresa attivita' (resume_all) su tutti i bot.")
+        results = {}
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {
+                executor.submit(self.resume_agent, aid): aid
+                for aid in self.agents_config.keys()
+            }
+            for fut in as_completed(futures):
+                aid = futures[fut]
+                try:
+                    results[aid] = fut.result()
+                except Exception as exc:
+                    results[aid] = {"status": "error", "message": str(exc)}
         return results

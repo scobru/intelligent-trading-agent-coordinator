@@ -72,8 +72,9 @@ def send_cycle_summary(snap: Dict[str, Any]) -> bool:
         name = a.get("name", aid.capitalize())
         eq = a.get("equity_usd", 0.0)
         online_str = "🟢" if a.get("online") else "🔴"
+        pause_str = " `[⏸️ PAUSA]`" if a.get("is_paused") else ""
         pos_str = f"({a.get('positions_count', 0)} pos)" if a.get("positions_count", 0) > 0 else ""
-        lines.append(f"{online_str} {icon} *{name}:* `${eq:,.2f}` {pos_str}")
+        lines.append(f"{online_str} {icon} *{name}:* `${eq:,.2f}` {pos_str}{pause_str}")
 
     gas_report = snap.get("gas_report", {})
     if gas_report.get("refuels_performed", 0) > 0:

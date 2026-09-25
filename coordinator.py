@@ -84,6 +84,13 @@ class Coordinator:
             for w in risk_data["warnings"]:
                 logger.warning("   [ALERT] %s", w)
 
+        # Se il Circuit Breaker e' scattato, arresto precauzionale di tutti i bot
+        if risk_data.get("circuit_breaker_active"):
+            logger.warning("🚨 [CIRCUIT BREAKER ATTIVO] Drawdown critico: invio STOP di emergenza a tutti i bot.")
+            self.agent_client.emergency_stop_all(
+                reason=f"Circuit Breaker attivato dal Coordinator (drawdown 24h: {risk_data.get('pnl_24h_pct', 0.0):.2f}%)"
+            )
+
         # 5. Gas Balancing & Refuel automatico
         logger.info("5/7 Verifica riserve Gas ETH su Base...")
         gas_report = self.gas_balancer.check_wallets_gas(agents_status, treasury_executor=self.treasury)
@@ -159,6 +166,22 @@ class Coordinator:
 
             logger.info("Prossimo ciclo tra %d secondi. In attesa...", config.INTERVAL_SECONDS)
             time.sleep(config.INTERVAL_SECONDS)
+
+    def pause_agent(self, agent_id: str, reason: str = "") -> Dict[str, Any]:
+        """Mette in pausa un agente subordinato."""
+        return self.agent_client.pause_agent(agent_id, reason)
+
+    def resume_agent(self, agent_id: str) -> Dict[str, Any]:
+        """Riattiva un agente subordinato."""
+        return self.agent_client.resume_agent(agent_id)
+
+    def emergency_stop(self, reason: str = "Blocco di emergenza manuale dal Coordinator") -> Dict[str, Any]:
+        """Blocco di emergenza: mette in pausa tutti i 6 agenti."""
+        return self.agent_client.emergency_stop_all(reason)
+
+    def resume_all(self) -> Dict[str, Any]:
+        """Ripresa globale: riattiva tutti i 6 agenti."""
+        return self.agent_client.resume_all()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Master Coordinator per la suite ITA.")

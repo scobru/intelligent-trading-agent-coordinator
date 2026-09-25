@@ -175,6 +175,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="header-actions">
       <span class="updated" id="last-update">Aggiornamento in corso...</span>
       <button class="run-btn" id="btn-run" onclick="triggerCycle()">⚡ Esegui Ciclo Ora</button>
+      <button class="run-btn" style="background: var(--success); padding: 7px 14px; font-size: 12px;" onclick="emergencyResume()">🟢 Resume All</button>
       <button class="panic-btn" id="btn-panic" onclick="emergencyPanic()">🚨 Emergency Stop</button>
     </div>
   </header>
@@ -312,6 +313,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const a = agents[aid];
         const al = allocs[aid] || {};
         const onlineBadge = a.online ? '<span class="badge b-ok">ONLINE</span>' : '<span class="badge b-bad">OFFLINE</span>';
+        const pauseBadge = a.is_paused ? '<span class="badge b-warn">PAUSA</span>' : '';
+        const pauseBtn = a.is_paused
+          ? `<button onclick="toggleAgentPause('${aid}', false)" style="background: rgba(34, 197, 94, 0.15); border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 6px; color: var(--success); padding: 3px 8px; font-size: 11px; cursor: pointer; font-weight: 600;">▶️ Ripristina</button>`
+          : `<button onclick="toggleAgentPause('${aid}', true)" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; color: var(--warning); padding: 3px 8px; font-size: 11px; cursor: pointer;">⏸️ Pausa</button>`;
         const actualPct = (al.actual_pct ? (al.actual_pct * 100).toFixed(1) : 0);
         const targetPct = (al.target_pct ? (al.target_pct * 100).toFixed(1) : 0);
 
@@ -322,7 +327,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <span style="font-size: 18px;">${a.icon || '🤖'}</span>
                 <span>${a.name}</span>
               </div>
-              ${onlineBadge}
+              <div style="display: flex; gap: 6px; align-items: center;">
+                ${pauseBadge}
+                ${onlineBadge}
+              </div>
             </div>
             <div style="font-size: 12px; color: var(--muted);">${a.description || ''}</div>
             <div style="display: flex; justify-content: space-between; align-items: baseline;">
@@ -342,9 +350,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               <span>Posizioni: <strong>${a.positions_count || 0}</strong></span>
               <span>Gas ETH: <strong>${(a.gas_eth || 0).toFixed(4)}</strong></span>
             </div>
-            <div style="display: flex; justify-content: space-between; margin-top: 4px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; gap: 6px;">
               <a href="${a.url || '#'}" target="_blank" style="font-size: 12px; text-decoration: none;">Apri Dashboard ↗</a>
-              <button onclick="triggerAgentRun('${aid}')" style="background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 3px 8px; font-size: 11px; cursor: pointer;">Avvia Ciclo</button>
+              <div style="display: flex; gap: 6px;">
+                ${pauseBtn}
+                <button onclick="triggerAgentRun('${aid}')" ${a.is_paused ? 'disabled style="opacity: 0.5; cursor: not-allowed; padding: 3px 8px; font-size: 11px; border-radius: 6px;" title="Bot in pausa"' : 'style="background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 3px 8px; font-size: 11px; cursor: pointer;"'}>Avvia Ciclo</button>
+              </div>
             </div>
           </div>
         `;
@@ -438,11 +449,40 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     async function emergencyPanic() {
-      if (!confirm('ATTENZIONE: Attivare il blocco di emergenza globale? Tutti i bot speculativi verranno congelati.')) return;
+      if (!confirm('ATTENZIONE: Attivare il blocco di emergenza globale? Tutti i 6 bot verranno messi in PAUSA.')) return;
       try {
         await fetch('/api/emergency_stop', { method: 'POST' });
-        alert('Blocco di emergenza attivato!');
-        refresh();
+        alert('Blocco di emergenza attivato su tutti i bot!');
+        setTimeout(refresh, 1000);
+      } catch(e) {
+        alert('Errore: ' + e);
+      }
+    }
+
+    async function emergencyResume() {
+      if (!confirm('Riattivare tutti i bot subordinati?')) return;
+      try {
+        await fetch('/api/emergency_resume', { method: 'POST' });
+        alert('Ripresa globale inviata con successo!');
+        setTimeout(refresh, 1000);
+      } catch(e) {
+        alert('Errore: ' + e);
+      }
+    }
+
+    async function toggleAgentPause(aid, shouldPause) {
+      const endpoint = shouldPause ? '/api/agent_pause/' + aid : '/api/agent_resume/' + aid;
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ reason: 'Richiesta manuale da Master Dashboard' })
+        }).then(r => r.json());
+        if (res.status === 'success') {
+          setTimeout(refresh, 1000);
+        } else {
+          alert('Errore operazione: ' + (res.message || JSON.stringify(res)));
+        }
       } catch(e) {
         alert('Errore: ' + e);
       }
@@ -582,10 +622,49 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
                 self._json(500, {"error": "Coordinator non inizializzato"})
             return
 
+        if path.startswith("/api/agent_pause/"):
+            aid = path.replace("/api/agent_pause/", "").strip()
+            reason = "Pausa richiesta da Master Dashboard"
+            try:
+                clen = int(self.headers.get("Content-Length", 0))
+                if clen > 0:
+                    body = json.loads(self.rfile.read(clen).decode("utf-8"))
+                    reason = body.get("reason", reason)
+            except Exception:
+                pass
+            if self.coordinator:
+                res = self.coordinator.agent_client.pause_agent(aid, reason=reason)
+                self._json(200, res)
+            else:
+                self._json(500, {"error": "Coordinator non inizializzato"})
+            return
+
+        if path.startswith("/api/agent_resume/"):
+            aid = path.replace("/api/agent_resume/", "").strip()
+            if self.coordinator:
+                res = self.coordinator.agent_client.resume_agent(aid)
+                self._json(200, res)
+            else:
+                self._json(500, {"error": "Coordinator non inizializzato"})
+            return
+
         if path == "/api/emergency_stop":
             logger.warning("🚨 EMERGENCY STOP RICHIESTO DA DASHBOARD!")
             db_utils.log_error("EMERGENCY_STOP_TRIGGERED", "Attivato blocco globale dalla dashboard", source="dashboard")
-            self._json(200, {"status": "emergency_activated"})
+            if self.coordinator:
+                res = self.coordinator.agent_client.emergency_stop_all(reason="Blocco di emergenza richiesto da Master Dashboard")
+                self._json(200, {"status": "emergency_activated", "details": res})
+            else:
+                self._json(200, {"status": "emergency_activated"})
+            return
+
+        if path == "/api/emergency_resume":
+            logger.info("🟢 RIPRESA GLOBALE RICHIESTA DA DASHBOARD!")
+            if self.coordinator:
+                res = self.coordinator.agent_client.resume_all()
+                self._json(200, {"status": "resumed_all", "details": res})
+            else:
+                self._json(200, {"status": "resumed_all"})
             return
 
         self.send_response(404)

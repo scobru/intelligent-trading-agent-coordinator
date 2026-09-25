@@ -118,7 +118,7 @@ AGENTS = {
     }
 }
 
-AGENT_RUN_TOKEN = os.getenv("AGENT_RUN_TOKEN", "")
+AGENT_RUN_TOKEN = os.getenv("AGENT_RUN_TOKEN", os.getenv("DASHBOARD_RUN_TOKEN", ""))
 
 # --- Matrici di Allocazione Target per Regime (%) ---
 # Somma sempre 100% (1.00)
