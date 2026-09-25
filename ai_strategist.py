@@ -179,10 +179,15 @@ class AiStrategist:
         self,
         regime_data: Dict[str, Any],
         agents_status: Dict[str, Dict[str, Any]],
-        treasury_bals: Dict[str, float],
-        risk_data: Dict[str, Any]
+        treasury_balances: Optional[Dict[str, float]] = None,
+        risk_data: Optional[Dict[str, Any]] = None,
+        treasury_bals: Optional[Dict[str, float]] = None,
+        **kwargs
     ) -> Dict[str, Any]:
         """Esegue l'analisi strategica completa combinando quantitativo e LLM."""
+        tbals = treasury_balances if treasury_balances is not None else (treasury_bals or {})
+        rdata = risk_data or {}
+
         regime = regime_data.get("regime", "BALANCED")
         fg_val = regime_data.get("fear_and_greed", 50)
         fg_label = regime_data.get("fear_and_greed_label", "Neutral")
@@ -197,10 +202,10 @@ class AiStrategist:
         prompt_data = {
             "macro_regime": regime,
             "fear_and_greed": f"{fg_val} ({fg_label})",
-            "total_net_worth_usd": risk_data.get("total_net_worth_usd", 0.0),
-            "portfolio_pnl_24h_pct": risk_data.get("pnl_24h_pct", 0.0),
-            "treasury_usdc": treasury_bals.get("usdc", 0.0),
-            "treasury_eth": treasury_bals.get("eth", 0.0),
+            "total_net_worth_usd": rdata.get("total_net_worth_usd", 0.0),
+            "portfolio_pnl_24h_pct": rdata.get("pnl_24h_pct", 0.0),
+            "treasury_usdc": tbals.get("usdc", 0.0),
+            "treasury_eth": tbals.get("eth", 0.0),
             "strategies_ranking": [
                 {
                     "id": r["agent_id"],

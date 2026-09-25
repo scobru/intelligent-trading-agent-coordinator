@@ -133,7 +133,8 @@ class Treasury:
         }
 
         signed = self.w3.eth.account.sign_transaction(tx, self.private_key)
-        tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
+        raw_tx = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
+        tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
         h_str = tx_hash.hex()
         logger.info("Trasferimento ETH completato: %s (tx: %s)", to_address, h_str)
         return h_str
@@ -173,7 +174,8 @@ class Treasury:
         })
 
         signed = self.w3.eth.account.sign_transaction(tx, self.private_key)
-        tx_hash = self.w3.eth.send_raw_transaction(signed.rawTransaction)
+        raw_tx = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
+        tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
         h_str = tx_hash.hex()
         logger.info("Trasferimento USDC completato verso %s: %s", to_address, h_str)
         return h_str
@@ -192,17 +194,104 @@ class Treasury:
         logger.info("Esecuzione azione %s: $%.2f da %s a %s (%s)",
                     action.get("action"), amount, from_id, to_id, reason)
 
-        try:
-            tx_h = self.transfer_usdc(to_wallet or "0x_sub_wallet_placeholder", amount)
-            status_str = "SIMULATED" if (config.PAPER_TRADING or config.DRY_RUN) else "SUCCESS"
+        # Modalita' PAPER TRADING: aggiorna il bilancio virtuale tra allocazioni
+        if config.PAPER_TRADING:
+            pst = self.get_paper_state()
+            allocs = pst.get("virtual_allocations", {})
+            if from_id == "master_treasury":
+                pst["treasury_usdc"] = max(0.0, float(pst.get("treasury_usdc", 0.0)) - amount)
+                if to_id in allocs:
+                    allocs[to_id] = allocs[to_id] + amount
+            else:
+                if from_id in allocs:
+                    allocs[from_id] = max(0.0, allocs[from_id] - amount)
+                if to_id in allocs:
+                    allocs[to_id] = allocs[to_id] + amount
+                elif to_id == "master_treasury":
+                    pst["treasury_usdc"] = float(pst.get("treasury_usdc", 0.0)) + amount
+            pst["total_rebalances_count"] = pst.get("total_rebalances_count", 0) + 1
+            self.save_paper_state(pst)
             db_utils.log_operation(
                 op_type=action.get("action", "TRANSFER_USDC"),
                 amount=amount,
                 asset="USDC",
                 from_agent=from_id,
                 to_agent=to_id,
+                tx_hash="0x_paper_rebalance",
+                status="SIMULATED",
+                reason=reason
+            )
+            return True
+
+        if config.DRY_RUN:
+            logger.info("[DRY-RUN] Simulazione azione %s: $%.2f (%s -> %s)",
+                        action.get("action"), amount, from_id, to_id)
+            db_utils.log_operation(
+                op_type=action.get("action", "TRANSFER_USDC"),
+                amount=amount,
+                asset="USDC",
+                from_agent=from_id,
+                to_agent=to_id,
+                tx_hash="0x_dry_run_rebalance",
+                status="DRY_RUN",
+                reason=f"[DRY-RUN] {reason}"
+            )
+            return True
+
+        # LIVE TRADING ON-CHAIN
+        # 1. Se from_agent non e' master_treasury (es. degen -> yield), il Master Coordinator
+        # non possiede la chiave privata del bot subordinato per prelevare fondi.
+        # L'azione viene registrata come raccomandazione ADVISORY.
+        if from_id != "master_treasury":
+            logger.info("ℹ️ Ribilanciamento %s: raccomandazione da %s a %s ($%.2f) registrata come ADVISORY.",
+                        action.get("action"), from_id, to_id, amount)
+            db_utils.log_operation(
+                op_type=action.get("action", "REBALANCE_ADVISORY"),
+                amount=amount,
+                asset="USDC",
+                from_agent=from_id,
+                to_agent=to_id,
+                tx_hash="N/A_ADVISORY",
+                status="RECOMMENDED",
+                reason=f"[ADVISORY] {reason}"
+            )
+            return True
+
+        # 2. from_id == "master_treasury": Finanziamento di un bot da parte della Master Treasury
+        current_bals = self.get_treasury_balances()
+        treasury_usdc = float(current_bals.get("usdc", 0.0))
+
+        if treasury_usdc < config.MIN_REBALANCE_USD:
+            warn_msg = (
+                f"Master Treasury ha USDC insufficienti per finanziare {to_id} "
+                f"(disponibili: ${treasury_usdc:.2f} USDC, richiesti: ${amount:.2f} USDC). "
+                f"Trasferimento saltato per evitare revert on-chain."
+            )
+            logger.warning("⚠️ %s", warn_msg)
+            db_utils.log_operation(
+                op_type=action.get("action", "REBALANCE_SKIPPED"),
+                amount=amount,
+                asset="USDC",
+                from_agent=from_id,
+                to_agent=to_id,
+                tx_hash="N/A_INSUFFICIENT_FUNDS",
+                status="SKIPPED",
+                reason=warn_msg
+            )
+            return False
+
+        # Se abbiamo USDC disponibili ma meno del target, inviamo quanto presente in cassa
+        actual_amount = min(amount, treasury_usdc)
+        try:
+            tx_h = self.transfer_usdc(to_wallet or "0x_sub_wallet_placeholder", actual_amount)
+            db_utils.log_operation(
+                op_type=action.get("action", "TRANSFER_USDC"),
+                amount=actual_amount,
+                asset="USDC",
+                from_agent=from_id,
+                to_agent=to_id,
                 tx_hash=tx_h,
-                status=status_str,
+                status="SUCCESS",
                 reason=reason
             )
             return True
