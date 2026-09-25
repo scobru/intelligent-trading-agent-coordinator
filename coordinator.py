@@ -14,6 +14,7 @@ from typing import Any, Dict
 import config
 import db_utils
 from agent_client import AgentClient
+from ai_strategist import AiStrategist
 from capital_allocator import CapitalAllocator
 from gas_balancer import GasBalancer
 from regime_detector import RegimeDetector
@@ -46,6 +47,7 @@ class Coordinator:
         self.treasury = Treasury()
         self.agent_client = AgentClient()
         self.regime_detector = RegimeDetector()
+        self.ai_strategist = AiStrategist()
         self.capital_allocator = CapitalAllocator()
         self.risk_engine = RiskEngine()
         self.gas_balancer = GasBalancer(w3=self.treasury.w3)
@@ -58,7 +60,7 @@ class Coordinator:
         logger.info("==================================================================")
 
         # 1. Recupero telemetria dai 6 agenti subordinati
-        logger.info("1/7 Interrogazione dei 6 agenti...")
+        logger.info("1/8 Interrogazione dei 6 agenti...")
         agents_status = self.agent_client.get_all_statuses()
         online_count = sum(1 for a in agents_status.values() if a.get("online"))
         logger.info("   -> %d/6 agenti online e operativi.", online_count)
@@ -67,17 +69,17 @@ class Coordinator:
         treasury_bals = self.treasury.get_treasury_balances()
         treasury_usdc = treasury_bals.get("usdc", 0.0)
         treasury_eth = treasury_bals.get("eth", 0.0)
-        logger.info("2/7 Master Treasury: $%.2f USDC | %.4f ETH", treasury_usdc, treasury_eth)
+        logger.info("2/8 Master Treasury: $%.2f USDC | %.4f ETH", treasury_usdc, treasury_eth)
 
         # 3. Analisi Macro e Regime di Mercato
-        logger.info("3/7 Rilevamento Regime di Mercato...")
+        logger.info("3/8 Rilevamento Regime di Mercato...")
         regime_data = self.regime_detector.detect_regime()
         regime = regime_data["regime"]
         logger.info("   -> Regime: %s (Fear & Greed: %d, %s)",
                     regime, regime_data["fear_and_greed"], regime_data["fear_and_greed_label"])
 
         # 4. Valutazione Rischio Globale, Delta Netto e Circuit Breaker
-        logger.info("4/7 Valutazione del Rischio e Delta Netto...")
+        logger.info("4/8 Valutazione del Rischio e Delta Netto...")
         risk_data = self.risk_engine.evaluate_portfolio_risk(agents_status, treasury_usdc)
         logger.info("   -> Net Worth Totale: $%.2f | PnL 24h: $%.2f (%.2f%%)",
                     risk_data["total_net_worth_usd"], risk_data["pnl_24h_usd"], risk_data["pnl_24h_pct"])
@@ -96,18 +98,34 @@ class Coordinator:
             )
 
         # 5. Gas Balancing & Refuel automatico
-        logger.info("5/7 Verifica riserve Gas ETH su Base...")
+        logger.info("5/8 Verifica riserve Gas ETH su Base...")
         gas_report = self.gas_balancer.check_wallets_gas(agents_status, treasury_executor=self.treasury)
         if gas_report["refuels_performed"] > 0:
             logger.info("   -> Eseguiti %d refuel di gas (Totale: %.4f ETH).",
                         gas_report["refuels_performed"], gas_report["total_eth_sent"])
 
-        # 6. Calcolo Allocazione Capitale e Piani di Ribilanciamento
-        logger.info("6/7 Calcolo allocazione capitale per regime %s...", regime)
+        # 6. Analisi AI Strategist & Performance Ranking
+        logger.info("6/8 Analisi AI Strategist (OpenRouter / Fallback Deterministico)...")
+        ai_report = self.ai_strategist.analyze_and_optimize(
+            regime_data=regime_data,
+            agents_status=agents_status,
+            treasury_balances=treasury_bals,
+            risk_data=risk_data
+        )
+        if ai_report.get("best_strategy") and ai_report.get("worst_strategy"):
+            logger.info("   -> AI Performance Ranking: Best '%s' | Worst '%s'",
+                        ai_report.get("best_strategy"), ai_report.get("worst_strategy"))
+        if ai_report.get("reasoning"):
+            brief = ai_report.get("reasoning").split("\n")[0][:120]
+            logger.info("   -> AI Briefing: %s", brief)
+
+        # 7. Calcolo Allocazione Capitale e Piani di Ribilanciamento
+        logger.info("7/8 Calcolo allocazione capitale per regime %s...", regime)
         alloc_plan = self.capital_allocator.compute_allocation_plan(
             regime=regime,
             agents_status=agents_status,
-            treasury_cash_usd=treasury_usdc
+            treasury_cash_usd=treasury_usdc,
+            dynamic_weights=ai_report.get("dynamic_weights")
         )
 
         executed_actions = 0
@@ -127,8 +145,8 @@ class Coordinator:
             else:
                 logger.info("   -> AUTO_REBALANCE disattivato (modalita' solo monitoraggio).")
 
-        # 7. Salvataggio snapshot SQLite
-        logger.info("7/7 Archiviazione snapshot di portafoglio...")
+        # 8. Salvataggio snapshot SQLite
+        logger.info("8/8 Archiviazione snapshot di portafoglio...")
         consolidated_snapshot = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "total_net_worth_usd": risk_data["total_net_worth_usd"],
@@ -143,6 +161,7 @@ class Coordinator:
             "agents": agents_status,
             "allocation_plan": alloc_plan,
             "gas_report": gas_report,
+            "ai_strategist": ai_report,
             "cycle_duration_seconds": round(time.time() - cycle_start, 2)
         }
         snap_id = db_utils.save_portfolio_snapshot(consolidated_snapshot)

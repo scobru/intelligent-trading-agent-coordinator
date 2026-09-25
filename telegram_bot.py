@@ -78,7 +78,14 @@ def send_cycle_summary(snap: Dict[str, Any]) -> bool:
 
     gas_report = snap.get("gas_report", {})
     if gas_report.get("refuels_performed", 0) > 0:
-        lines.append(f"\n⛽ *Gas Balancer:* Eseguiti {gas_report['refuels_performed']} refuel automatici ETH.")
+        lines.append(f"\n⛽ *Gas Balancer:* Eseguiti {gas_report['refuels_performed']} refuel automatici ETH ({gas_report.get('total_eth_sent', 0.0):.4f} ETH).")
+
+    ai = snap.get("ai_strategist", {})
+    if ai and ai.get("best_strategy") and ai.get("worst_strategy"):
+        lines.append(f"\n🧠 *AI Strategist:* 🏆 Best `{ai.get('best_strategy')}` | 🔻 Underperforming `{ai.get('worst_strategy')}`")
+        if ai.get("reasoning"):
+            brief = ai.get("reasoning").split("\n")[0][:140]
+            lines.append(f"💬 _{brief}_")
 
     warnings = risk.get("warnings", [])
     if warnings:

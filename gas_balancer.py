@@ -62,43 +62,59 @@ class GasBalancer:
 
             # Esecuzione refuel automatico se attivo e necessario
             if status in ("CRITICAL_LOW", "WARN_LOW") and self.auto_refuel and wallet and treasury_executor:
-                if not config.DRY_RUN and not config.PAPER_TRADING:
-                    try:
-                        tx_hash = treasury_executor.transfer_eth(wallet, self.refuel_amount_eth)
-                        if tx_hash:
-                            item["refueled"] = True
-                            item["tx_hash"] = tx_hash
-                            refuels_performed += 1
-                            total_eth_sent += self.refuel_amount_eth
-                            db_utils.log_operation(
-                                op_type="REFUEL_ETH",
-                                amount=self.refuel_amount_eth,
-                                asset="ETH",
-                                from_agent="master_treasury",
-                                to_agent=agent_id,
-                                tx_hash=tx_hash,
-                                status="SUCCESS",
-                                reason=f"Gas refuel automatico: saldo precedente {gas_eth:.5f} ETH."
-                            )
-                    except Exception as exc:
-                        logger.error("Errore durante refuel ETH per %s: %s", agent_id, exc)
-                        db_utils.log_error("GAS_REFUEL_ERROR", str(exc), source=f"gas_balancer_{agent_id}")
-                else:
-                    # Simulazione in DRY_RUN / PAPER
-                    item["refueled"] = True
-                    item["tx_hash"] = "0x_simulated_gas_refuel_hash"
-                    refuels_performed += 1
-                    total_eth_sent += self.refuel_amount_eth
-                    db_utils.log_operation(
-                        op_type="REFUEL_ETH",
-                        amount=self.refuel_amount_eth,
-                        asset="ETH",
-                        from_agent="master_treasury",
-                        to_agent=agent_id,
-                        tx_hash="0x_simulated",
-                        status="SIMULATED",
-                        reason=f"[SIMULATO] Gas refuel: saldo precedente {gas_eth:.5f} ETH."
+                treasury_eth = 0.0
+                try:
+                    tbals = treasury_executor.get_treasury_balances()
+                    treasury_eth = float(tbals.get("eth", 0.0) or 0.0)
+                except Exception:
+                    pass
+
+                min_treasury_buffer = 0.0008  # Riserva per pagare le commissioni del master
+                if treasury_eth < (self.refuel_amount_eth + min_treasury_buffer) and not config.DRY_RUN and not config.PAPER_TRADING:
+                    warn_msg = (
+                        f"Master Treasury ha ETH insufficienti per refuel di {agent_id} "
+                        f"(disponibili: {treasury_eth:.5f} ETH, richiesti: {self.refuel_amount_eth:.4f} ETH)."
                     )
+                    logger.warning("⛽ %s", warn_msg)
+                    item["warning"] = warn_msg
+                else:
+                    if not config.DRY_RUN and not config.PAPER_TRADING:
+                        try:
+                            tx_hash = treasury_executor.transfer_eth(wallet, self.refuel_amount_eth)
+                            if tx_hash:
+                                item["refueled"] = True
+                                item["tx_hash"] = tx_hash
+                                refuels_performed += 1
+                                total_eth_sent += self.refuel_amount_eth
+                                db_utils.log_operation(
+                                    op_type="REFUEL_ETH",
+                                    amount=self.refuel_amount_eth,
+                                    asset="ETH",
+                                    from_agent="master_treasury",
+                                    to_agent=agent_id,
+                                    tx_hash=tx_hash,
+                                    status="SUCCESS",
+                                    reason=f"Gas refuel automatico: saldo bot precedente {gas_eth:.5f} ETH (Treasury residuo: {treasury_eth - self.refuel_amount_eth:.4f} ETH)."
+                                )
+                        except Exception as exc:
+                            logger.error("Errore durante refuel ETH per %s: %s", agent_id, exc)
+                            db_utils.log_error("GAS_REFUEL_ERROR", str(exc), source=f"gas_balancer_{agent_id}")
+                    else:
+                        # Simulazione in DRY_RUN / PAPER
+                        item["refueled"] = True
+                        item["tx_hash"] = "0x_simulated_gas_refuel_hash"
+                        refuels_performed += 1
+                        total_eth_sent += self.refuel_amount_eth
+                        db_utils.log_operation(
+                            op_type="REFUEL_ETH",
+                            amount=self.refuel_amount_eth,
+                            asset="ETH",
+                            from_agent="master_treasury",
+                            to_agent=agent_id,
+                            tx_hash="0x_simulated",
+                            status="SIMULATED",
+                            reason=f"[SIMULATO] Gas refuel: saldo bot precedente {gas_eth:.5f} ETH."
+                        )
 
             wallet_reports.append(item)
 

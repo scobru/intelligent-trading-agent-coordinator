@@ -168,6 +168,31 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       font-size: 12px;
     }
     .run-btn:hover { opacity: 0.9; }
+    .ai-card {
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(59, 130, 246, 0.05) 100%);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 24px;
+    }
+    .ai-top-badge {
+      background: rgba(34, 197, 94, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .ai-worst-badge {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -210,6 +235,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <h3>Master Treasury (Cassa)</h3>
       <div class="val" id="treasury-cash">--</div>
       <div class="sub" id="treasury-gas">Gas Riserva: --</div>
+    </div>
+  </div>
+
+  <!-- AI MACRO STRATEGIST & PERFORMANCE OPTIMIZER -->
+  <div class="ai-card" id="ai-section">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 20px;">🧠</span>
+        <h3 style="margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--text);">
+          AI Macro Strategist & Performance Optimizer
+        </h3>
+        <span id="ai-source-badge" style="background: rgba(139, 92, 246, 0.2); color: var(--accent); border: 1px solid rgba(139, 92, 246, 0.4); padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">AI Engine</span>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center;">
+        <span id="ai-best-badge" class="ai-top-badge">🏆 Top: --</span>
+        <span id="ai-worst-badge" class="ai-worst-badge">🔻 Underperforming: --</span>
+      </div>
+    </div>
+    <div id="ai-reasoning" style="font-size: 13px; line-height: 1.6; color: var(--text); background: rgba(0,0,0,0.25); padding: 12px 14px; border-radius: 8px; border-left: 3px solid var(--primary); margin-bottom: 12px;">
+      Inizializzazione intelligenza artificiale in corso...
+    </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); flex-wrap: wrap; gap: 8px;">
+      <span>⚡ <strong>Ribilanciamento Dinamico:</strong> Spostamento automatico fino a ±10% di peso verso la strategia con migliore rendimento.</span>
+      <span id="ai-gas-note">⛽ <strong>Auto-Refuel Gas:</strong> Trasferisce ETH solo se la Tesoreria Master ha saldo disponibile (&ge; 0.0038 ETH).</span>
     </div>
   </div>
 
@@ -309,18 +358,42 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       document.getElementById('treasury-cash').textContent = ITA.usd(tr.usdc);
       document.getElementById('treasury-gas').textContent = `ETH Gas: ${(tr.eth || 0).toFixed(4)} ETH`;
 
+      // AI Strategist
+      const ai = s.ai_strategist || {};
+      const aiBadge = document.getElementById('ai-source-badge');
+      if (aiBadge) {
+        aiBadge.textContent = ai.source === 'openrouter_ai' ? 'OpenRouter LLM (Deep Reasoning)' : 'Algoritmo Quantitativo';
+      }
+      const bestEl = document.getElementById('ai-best-badge');
+      if (bestEl) {
+        bestEl.textContent = '🏆 Top: ' + (ai.best_strategy ? ai.best_strategy.toUpperCase() : '--');
+      }
+      const worstEl = document.getElementById('ai-worst-badge');
+      if (worstEl) {
+        worstEl.textContent = '🔻 Scaling: ' + (ai.worst_strategy ? ai.worst_strategy.toUpperCase() : '--');
+      }
+      const reasonEl = document.getElementById('ai-reasoning');
+      if (reasonEl) {
+        reasonEl.textContent = ai.reasoning || 'Nessun briefing disponibile.';
+      }
+
       // Render 6 Agents Cards
-      renderAgents(s.agents || {}, s.allocation_plan?.allocations || {});
+      renderAgents(s.agents || {}, s.allocation_plan?.allocations || {}, ai);
 
       // Render Allocation Table
-      renderAllocTable(s.allocation_plan?.allocations || {});
+      renderAllocTable(s.allocation_plan?.allocations || {}, ai);
     }
 
-    function renderAgents(agents, allocs) {
+    function renderAgents(agents, allocs, ai) {
       const container = document.getElementById('agents-container');
       const html = Object.keys(agents).map(aid => {
         const a = agents[aid];
         const al = allocs[aid] || {};
+        const isBest = (ai && ai.best_strategy === aid);
+        const isWorst = (ai && ai.worst_strategy === aid);
+        const aiRankBadge = isBest
+          ? '<span class="ai-top-badge" style="font-size: 10px; padding: 2px 6px;">🏆 TOP</span>'
+          : (isWorst ? '<span class="ai-worst-badge" style="font-size: 10px; padding: 2px 6px;">🔻 SCALED</span>' : '');
         const onlineBadge = a.online ? '<span class="badge b-ok">ONLINE</span>' : '<span class="badge b-bad">OFFLINE</span>';
         const pauseBadge = a.is_paused ? '<span class="badge b-warn">PAUSA</span>' : '';
         const pauseBtn = a.is_paused
@@ -337,6 +410,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <span>${a.name}</span>
               </div>
               <div style="display: flex; gap: 6px; align-items: center;">
+                ${aiRankBadge}
                 ${pauseBadge}
                 ${onlineBadge}
               </div>
@@ -372,7 +446,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       container.innerHTML = html;
     }
 
-    function renderAllocTable(allocs) {
+    function renderAllocTable(allocs, ai) {
       const tbody = document.getElementById('alloc-table');
       if (!allocs || Object.keys(allocs).length === 0) {
         tbody.innerHTML = '<tr><td colspan="7" class="empty">Nessuna allocazione disponibile.</td></tr>';
@@ -382,9 +456,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const al = allocs[aid];
         const driftCls = (al.drift_usd >= 0) ? 'drift-pos' : 'drift-neg';
         const sign = (al.drift_usd >= 0) ? '+' : '';
+        const dynNote = (ai && ai.best_strategy === aid) ? ' <span style="color: var(--success); font-weight: 700;">(+boost)</span>' : ((ai && ai.worst_strategy === aid) ? ' <span style="color: var(--danger); font-weight: 700;">(-cut)</span>' : '');
         return `
           <tr style="border-bottom: 1px solid var(--border);">
-            <td style="padding: 10px 8px; font-weight: 600;">${aid.toUpperCase()}</td>
+            <td style="padding: 10px 8px; font-weight: 600;">${aid.toUpperCase()}${dynNote}</td>
             <td style="color: var(--muted); font-size: 12px;">${al.target_pct > 0.2 ? 'Core Strategy' : 'Satellite'}</td>
             <td>${(al.target_pct * 100).toFixed(1)}%</td>
             <td>${(al.actual_pct * 100).toFixed(1)}%</td>
@@ -590,6 +665,16 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
 
             if _latest_status_cache:
                 _latest_status_cache["mode"] = "paper" if config.PAPER_TRADING else ("dry_run" if config.DRY_RUN else "live")
+                if "ai_strategist" not in _latest_status_cache and self.coordinator:
+                    try:
+                        _latest_status_cache["ai_strategist"] = self.coordinator.ai_strategist.analyze_and_optimize(
+                            regime_data=_latest_status_cache.get("regime_data", {}),
+                            agents_status=_latest_status_cache.get("agents", {}),
+                            treasury_balances=_latest_status_cache.get("treasury", {}),
+                            risk_data=_latest_status_cache.get("risk_data", {})
+                        )
+                    except Exception:
+                        pass
             self._json(200, _latest_status_cache or {})
             return
 

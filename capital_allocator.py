@@ -5,7 +5,7 @@ tra gli agenti per riallineare le quote operative (profit sweeping, liquidity in
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import config
 
@@ -21,10 +21,11 @@ class CapitalAllocator:
         self,
         regime: str,
         agents_status: Dict[str, Dict[str, Any]],
-        treasury_cash_usd: float = 0.0
+        treasury_cash_usd: float = 0.0,
+        dynamic_weights: Optional[Dict[str, float]] = None
     ) -> Dict[str, Any]:
         """Calcola l'allocazione target, gli scostamenti correnti e le azioni di ribilanciamento."""
-        weights = self.target_matrices.get(regime, self.target_matrices["BALANCED"])
+        weights = dynamic_weights or self.target_matrices.get(regime, self.target_matrices["BALANCED"])
 
         # Calcolo del Net Worth consolidato (somma equity dei 6 bot + cash master treasury)
         agents_equity = {}

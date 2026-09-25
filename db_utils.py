@@ -219,3 +219,45 @@ def get_recent_errors(limit: int = 20) -> List[Dict[str, Any]]:
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+def get_agents_historical_pnl() -> Dict[str, Dict[str, Any]]:
+    """Calcola PnL e variazione percentuale dell'equity per ciascun agente rispetto al passato."""
+    conn = get_connection()
+    cur = conn.cursor()
+    performance = {}
+    try:
+        cur.execute("""
+            SELECT agent_id,
+                   MIN(id) as first_id,
+                   MAX(id) as last_id
+            FROM agent_snapshots
+            GROUP BY agent_id;
+        """)
+        rows = cur.fetchall()
+        for r in rows:
+            aid = r["agent_id"]
+            first_id = r["first_id"]
+            last_id = r["last_id"]
+
+            cur.execute("SELECT equity_usd, created_at FROM agent_snapshots WHERE id = ?", (first_id,))
+            first_row = cur.fetchone()
+            cur.execute("SELECT equity_usd, created_at FROM agent_snapshots WHERE id = ?", (last_id,))
+            last_row = cur.fetchone()
+
+            if first_row and last_row:
+                initial_eq = float(first_row["equity_usd"] or 0.0)
+                current_eq = float(last_row["equity_usd"] or 0.0)
+                diff_usd = current_eq - initial_eq
+                diff_pct = (diff_usd / initial_eq * 100.0) if initial_eq > 0.0 else 0.0
+                performance[aid] = {
+                    "initial_equity_usd": round(initial_eq, 2),
+                    "current_equity_usd": round(current_eq, 2),
+                    "pnl_usd": round(diff_usd, 2),
+                    "pnl_pct": round(diff_pct, 2),
+                    "snapshots_count": (last_id - first_id + 1)
+                }
+    except Exception as exc:
+        logger.debug("Errore calcolo PnL storico agenti: %s", exc)
+    finally:
+        conn.close()
+    return performance
