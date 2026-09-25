@@ -164,14 +164,19 @@ class AgentClient:
             usdc_bal = float(balances.get("USDC", 0.0) or 0.0)
             res["balance_usd"] = usdc_bal
             pos_eval = raw.get("position", {}) if isinstance(raw.get("position"), dict) else {}
-            lp_val = float(pos_eval.get("current_lp_value_usd", 0.0) or 0.0)
+            has_pos = bool(pos_eval.get("has_position", False))
+            lp_val = float(pos_eval.get("current_lp_value_usd", 0.0) or 0.0) if has_pos else 0.0
             px = float(raw.get("current_price", 0.0) or 0.0)
             weth_val = float(balances.get("WETH", 0.0) or 0.0) * px
-            if paper:
+            if "total_equity_usd" in raw:
+                res["equity_usd"] = float(raw["total_equity_usd"])
+            elif "total_value_usd" in raw:
+                res["equity_usd"] = float(raw["total_value_usd"])
+            elif paper:
                 res["equity_usd"] = float(paper.get("equity_usd", 0.0) or (usdc_bal + lp_val + weth_val))
             else:
                 res["equity_usd"] = usdc_bal + lp_val + weth_val
-            pos_list = [pos_eval] if pos_eval.get("has_position") else []
+            pos_list = [pos_eval] if has_pos else []
             res["positions"] = pos_list
             res["positions_count"] = len(pos_list)
 
