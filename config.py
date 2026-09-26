@@ -203,6 +203,21 @@ AUTO_REBALANCE = _b("AUTO_REBALANCE", False)
 MIN_REBALANCE_USD = _f("MIN_REBALANCE_USD", 10.0)
 REBALANCE_THRESHOLD_PCT = _f("REBALANCE_THRESHOLD_PCT", 5.0)
 
+# --- Soglie Minime Operative per Agente (USD) ---
+# Se il capitale allocato o disponibile è inferiore alla soglia minima operativa,
+# il bot non può piazzare ordini (es. Neutral richiede >= $150 per spot 1x e short perp SynFutures con nozionale >= $70).
+AGENT_MIN_VIABLE_CAPITAL = {
+    "neutral": _f("MIN_VIABLE_NEUTRAL_USD", 150.0), # Spot 1x ($70) + Margine Gate ($35) + buffer
+    "lp": _f("MIN_VIABLE_LP_USD", 50.0),            # Concentrated LP + recentering fees
+    "perp": _f("MIN_VIABLE_PERP_USD", 15.0),        # Con leva 5x copre il minimo nozionale di $70
+    "degen": _f("MIN_VIABLE_DEGEN_USD", 15.0),      # Minimo swap altcoin e slippage
+    "dca": _f("MIN_VIABLE_DCA_USD", 10.0),          # Minimo acquisto ricorrente spot
+    "yield": _f("MIN_VIABLE_YIELD_USD", 5.0),        # Lending vault / safe haven
+}
+
+ENABLE_CAPITAL_PRUNING = _b("ENABLE_CAPITAL_PRUNING", True)
+ENABLE_IDLE_CAPITAL_SWEEP = _b("ENABLE_IDLE_CAPITAL_SWEEP", True)
+
 # --- Gas Balancer (ETH su Base) ---
 AUTO_REFUEL_GAS = _b("AUTO_REFUEL_GAS", True)
 GAS_WARN_ETH = _f("GAS_WARN_ETH", 0.0015)

@@ -5,7 +5,7 @@ tra gli agenti per riallineare le quote operative (profit sweeping, liquidity in
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import config
 
@@ -16,6 +16,91 @@ class CapitalAllocator:
         self.target_matrices = config.REGIME_TARGET_WEIGHTS
         self.min_rebalance_usd = config.MIN_REBALANCE_USD
         self.rebalance_threshold_pct = config.REBALANCE_THRESHOLD_PCT
+        self.min_viable_caps = getattr(config, "AGENT_MIN_VIABLE_CAPITAL", {
+            "neutral": 150.0,
+            "lp": 50.0,
+            "perp": 15.0,
+            "degen": 15.0,
+            "dca": 10.0,
+            "yield": 5.0
+        })
+        self.enable_pruning = getattr(config, "ENABLE_CAPITAL_PRUNING", True)
+        self.enable_idle_sweep = getattr(config, "ENABLE_IDLE_CAPITAL_SWEEP", True)
+
+    def adjust_weights_for_viability(
+        self,
+        base_weights: Dict[str, float],
+        total_net_worth: float
+    ) -> Tuple[Dict[str, float], List[str]]:
+        """
+        Adatta i pesi target in base alle soglie minime di capitale operativo di ciascun bot.
+        Se un bot riceverebbe un capitale inferiore alla sua soglia minima operativa
+        (es. Neutral < $150), il suo peso viene azzerato e ridistribuito proporzionalmente
+        sulle altre strategie attive o su Yield/Tesoreria.
+        """
+        if not self.enable_pruning or total_net_worth <= 0:
+            return dict(base_weights), []
+
+        weights = {k: float(v) for k, v in base_weights.items()}
+        pruned_notes: List[str] = []
+
+        max_iterations = len(weights)
+        for _ in range(max_iterations):
+            below_threshold = []
+            for agent_id, w in weights.items():
+                if w <= 0.0:
+                    continue
+                min_cap = self.min_viable_caps.get(agent_id, 0.0)
+                target_usd = total_net_worth * w
+                if target_usd < min_cap:
+                    shortfall = min_cap - target_usd
+                    below_threshold.append((agent_id, w, target_usd, min_cap, shortfall))
+
+            if not below_threshold:
+                break
+
+            active_agents = [aid for aid, w in weights.items() if w > 0.0]
+            if len(active_agents) <= 1:
+                break
+            # Se TUTTI gli agenti attivi sono sotto soglia, parcheggia tutto su yield
+            if len(below_threshold) == len(active_agents):
+                if "yield" in weights:
+                    for aid in weights:
+                        weights[aid] = 1.0 if aid == "yield" else 0.0
+                break
+
+            # Chi ha un min_cap > total_net_worth non potrà mai essere finanziato dal portafoglio attuale
+            impossible = [item for item in below_threshold if item[3] > total_net_worth]
+            if impossible:
+                target_to_prune = sorted(impossible, key=lambda x: x[3], reverse=True)[0]
+            else:
+                target_to_prune = sorted(below_threshold, key=lambda x: x[2] / max(x[3], 0.01))[0]
+
+            agent_to_prune = target_to_prune[0]
+            pruned_w = weights[agent_to_prune]
+            weights[agent_to_prune] = 0.0
+            note = (
+                f"{agent_to_prune.upper()} disattivato: target ${target_to_prune[2]:.2f} "
+                f"< minimo operativo ${target_to_prune[3]:.0f} (portafoglio: ${total_net_worth:.2f})"
+            )
+            pruned_notes.append(note)
+            logger.info("   [CAPITAL PRUNING] %s", note)
+
+            # Ridistribuisci proporzionalmente tra i rimanenti con peso > 0
+            remaining_sum = sum(w for aid, w in weights.items() if aid != agent_to_prune and w > 0.0)
+            if remaining_sum > 0:
+                for aid in weights:
+                    if weights[aid] > 0.0:
+                        weights[aid] += (weights[aid] / remaining_sum) * pruned_w
+            elif "yield" in weights:
+                weights["yield"] = 1.0
+
+        total_w = sum(weights.values())
+        if total_w > 0:
+            for aid in weights:
+                weights[aid] = round(weights[aid] / total_w, 4)
+
+        return weights, pruned_notes
 
     def compute_allocation_plan(
         self,
@@ -25,7 +110,7 @@ class CapitalAllocator:
         dynamic_weights: Optional[Dict[str, float]] = None
     ) -> Dict[str, Any]:
         """Calcola l'allocazione target, gli scostamenti correnti e le azioni di ribilanciamento."""
-        weights = dynamic_weights or self.target_matrices.get(regime, self.target_matrices["BALANCED"])
+        raw_weights = dynamic_weights or self.target_matrices.get(regime, self.target_matrices["BALANCED"])
 
         # Calcolo del Net Worth consolidato (somma equity dei 6 bot + cash master treasury)
         agents_equity = {}
@@ -44,8 +129,12 @@ class CapitalAllocator:
                 "total_net_worth_usd": 0.0,
                 "rebalance_needed": False,
                 "allocations": {},
-                "actions": []
+                "actions": [],
+                "pruned_notes": []
             }
+
+        # Applica il filtro di sostenibilità operativa / pruning del capitale
+        weights, pruned_notes = self.adjust_weights_for_viability(raw_weights, total_net_worth)
 
         allocations = {}
         overweight = []
@@ -58,13 +147,20 @@ class CapitalAllocator:
             drift_usd = actual_usd - target_usd
             drift_pct = (actual_pct - target_pct) * 100.0
 
+            min_cap = self.min_viable_caps.get(agent_id, 0.0)
+            is_pruned = (target_pct == 0.0 and raw_weights.get(agent_id, 0.0) > 0.0)
+            is_viable = (target_usd >= min_cap or target_usd == 0.0)
+
             allocations[agent_id] = {
                 "target_pct": round(target_pct, 4),
                 "actual_pct": round(actual_pct, 4),
                 "target_usd": round(target_usd, 2),
                 "actual_usd": round(actual_usd, 2),
                 "drift_usd": round(drift_usd, 2),
-                "drift_pct": round(drift_pct, 2)
+                "drift_pct": round(drift_pct, 2),
+                "min_viable_usd": min_cap,
+                "pruned": is_pruned,
+                "is_viable": is_viable
             }
 
             if drift_usd > self.min_rebalance_usd and drift_pct > self.rebalance_threshold_pct:
@@ -73,6 +169,7 @@ class CapitalAllocator:
                 underweight.append((agent_id, abs(drift_usd)))
 
         actions: List[Dict[str, Any]] = []
+        handled_overweight = set()
 
         # 1. Regola Speciale per Alta Volatilita' / Panic: Svuota LP verso Yield
         if regime in ("HIGH_VOLATILITY", "BEAR_PANIC") and agents_equity.get("lp", 0.0) > self.min_rebalance_usd:
@@ -85,10 +182,46 @@ class CapitalAllocator:
                 "asset": "USDC",
                 "reason": f"Regime {regime}: Ritiro liquidita' LP concentrata per azzerare Impermanent Loss."
             })
+            handled_overweight.add("lp")
 
-        # 2. Profit Sweeping da bot speculativi (Degen o Perp) verso la Tesoreria / Yield
+        # 2. Sweeping di profitti o recupero di capitale inerte (Idle Capital Recovery)
+        # Se un bot è sovrappesato:
+        # a) se il suo target è 0.0 o se è inattivo con capitale sotto la soglia minima -> SWEEP_IDLE_FUNDS
+        # b) se è degen o perp in surplus di profitto -> SWEEP_PROFIT
         for agent_id, surplus in overweight:
-            if agent_id in ("degen", "perp"):
+            if agent_id in handled_overweight:
+                continue
+
+            st = agents_status.get(agent_id, {})
+            pos_cnt = int(st.get("positions_count", 0))
+            actual_usd = agents_equity.get(agent_id, 0.0)
+            min_cap = self.min_viable_caps.get(agent_id, 0.0)
+            tgt_usd = allocations.get(agent_id, {}).get("target_usd", 0.0)
+
+            is_idle_sub_threshold = (pos_cnt == 0 and actual_usd < min_cap)
+            is_zero_target_idle = (tgt_usd == 0.0 and pos_cnt == 0)
+
+            if is_zero_target_idle or is_idle_sub_threshold:
+                # Destinazione: bot con il deficit più elevato tra quelli attivi, altrimenti Yield o Master Treasury
+                target_dest = "yield"
+                if underweight:
+                    valid_under = [u for u in underweight if allocations.get(u[0], {}).get("target_usd", 0.0) > 0]
+                    if valid_under:
+                        target_dest = sorted(valid_under, key=lambda x: x[1], reverse=True)[0][0]
+
+                actions.append({
+                    "action": "SWEEP_IDLE_FUNDS",
+                    "from_agent": agent_id,
+                    "to_agent": target_dest,
+                    "amount_usd": round(surplus, 2),
+                    "asset": "USDC",
+                    "reason": (
+                        f"Recupero capitale inerte da {agent_id.upper()}: saldo attuale ${actual_usd:.2f} "
+                        f"insufficiente per operare (minimo ${min_cap:.0f}, target $0). Spostamento a {target_dest.upper()}."
+                    )
+                })
+                handled_overweight.add(agent_id)
+            elif agent_id in ("degen", "perp"):
                 target_dest = "yield"
                 actions.append({
                     "action": "SWEEP_PROFIT",
@@ -98,27 +231,40 @@ class CapitalAllocator:
                     "asset": "USDC",
                     "reason": f"Sweep dei profitti in eccesso da {agent_id.upper()} verso {target_dest.upper()}."
                 })
+                handled_overweight.add(agent_id)
 
         # 3. Rebalancing standard tra surplus e deficit
-        # Se abbiamo liquidita' inattiva in Master Treasury o in bot in surplus, finanziamo i bot sottopesati (es. Perp, DCA, LP)
+        # Se abbiamo liquidita' inattiva in Master Treasury o in bot in surplus non ancora gestiti, finanziamo i bot sottopesati
         for agent_id, deficit in underweight:
+            # Calcola quanto deficit è già stato coperto da sweep precedenti destinati a questo agente
+            already_funded = sum(a.get("amount_usd", 0.0) for a in actions if a.get("to_agent") == agent_id)
+            remaining_deficit = max(0.0, deficit - already_funded)
+            if remaining_deficit < self.min_rebalance_usd:
+                continue
+
             # Non finanziare bot a rischio se siamo in Panic
             if regime == "BEAR_PANIC" and agent_id in ("degen", "lp"):
                 continue
 
+            # Non finanziare bot che sono stati potati a target 0
+            if allocations.get(agent_id, {}).get("target_usd", 0.0) <= 0.0:
+                continue
+
             # Priorità della sorgente:
             # 1. Master Treasury se ha saldo disponibile
-            # 2. Altrimenti, l'agente con il surplus più cospicuo
+            # 2. Altrimenti, l'agente con il surplus più cospicuo tra quelli non ancora gestiti
             source = "master_treasury"
+            remaining_overweight = [o for o in overweight if o[0] not in handled_overweight]
+
             if treasury_cash_usd >= self.min_rebalance_usd:
                 source = "master_treasury"
-            elif overweight:
-                sorted_over = sorted(overweight, key=lambda x: x[1], reverse=True)
+            elif remaining_overweight:
+                sorted_over = sorted(remaining_overweight, key=lambda x: x[1], reverse=True)
                 source = sorted_over[0][0]
             elif treasury_cash_usd >= 5.0:
                 source = "master_treasury"
 
-            amount_to_fund = min(deficit, 1000.0)  # Cap conservativo per transazione
+            amount_to_fund = min(remaining_deficit, 1000.0)  # Cap conservativo per transazione
             if source == "master_treasury" and treasury_cash_usd > 0:
                 amount_to_fund = min(amount_to_fund, treasury_cash_usd)
 
@@ -130,8 +276,10 @@ class CapitalAllocator:
                     "to_agent": agent_id,
                     "amount_usd": round(amount_to_fund, 2),
                     "asset": "USDC",
-                    "reason": f"Ribilanciamento capitale: {source.upper()} finanzia {agent_id.upper()} (deficit: ${deficit:.2f})."
+                    "reason": f"Ribilanciamento capitale: {source.upper()} finanzia {agent_id.upper()} (deficit residuo: ${remaining_deficit:.2f})."
                 })
+                if source != "master_treasury":
+                    handled_overweight.add(source)
 
         rebalance_needed = len(actions) > 0
 
@@ -140,5 +288,6 @@ class CapitalAllocator:
             "total_net_worth_usd": round(total_net_worth, 2),
             "rebalance_needed": rebalance_needed,
             "allocations": allocations,
-            "actions": actions
+            "actions": actions,
+            "pruned_notes": pruned_notes
         }

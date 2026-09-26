@@ -146,6 +146,7 @@ class AiStrategist:
                         "IMPORTANTE: I bot con equity a $0 e 0 posizioni NON sono falliti né liquidati: sono nodi operativi appena avviati in attesa di primo finanziamento. "
                         "Se il regime lo consente, raccomanda di capitalizzarli attingendo dalla Master Treasury o dal surplus di strategie con peso in eccesso. "
                         "Non considerare 'peggiore' o 'liquidata' una strategia solo perché la sua equity è attualmente a 0 per assenza di fondi iniziali. "
+                        "SOGLIE MINIME OPERATIVE: Ciascun bot ha una soglia minima per poter operare: Neutral >= $150 (spot 1x + short SynFutures), LP >= $50, Perp >= $15 (con leva), DCA >= $10, Degen >= $15, Yield >= $5. Se il capitale totale è ridotto, evita di frammentarlo sotto-soglia e concentralo sui bot che possono aprire posizioni reali. "
                         "Rispondi ESCLUSIVAMENTE in formato JSON valido senza codice markdown o testo introduttivo con questo schema esatto:\n"
                         "{\n"
                         '  "market_briefing": "Breve sintesi macro e di portafoglio in italiano (max 250 caratteri)",\n'

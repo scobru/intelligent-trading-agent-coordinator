@@ -465,10 +465,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const driftCls = (al.drift_usd >= 0) ? 'drift-pos' : 'drift-neg';
         const sign = (al.drift_usd >= 0) ? '+' : '';
         const dynNote = (ai && ai.best_strategy === aid) ? ' <span style="color: var(--success); font-weight: 700;">(+boost)</span>' : ((ai && ai.worst_strategy === aid) ? ' <span style="color: var(--danger); font-weight: 700;">(-cut)</span>' : '');
+        const roleBadge = al.pruned ? `<span style="color: #f59e0b; font-size: 11px; background: rgba(245, 158, 11, 0.12); padding: 2px 6px; border-radius: 4px;" title="Capitale insufficiente per operare (minimo $${al.min_viable_usd || 0})">⚠️ Sotto soglia (&lt;$${al.min_viable_usd || 0})</span>` : (al.target_pct > 0.2 ? 'Core Strategy' : 'Satellite');
         return `
           <tr style="border-bottom: 1px solid var(--border);">
             <td style="padding: 10px 8px; font-weight: 600;">${aid.toUpperCase()}${dynNote}</td>
-            <td style="color: var(--muted); font-size: 12px;">${al.target_pct > 0.2 ? 'Core Strategy' : 'Satellite'}</td>
+            <td style="color: var(--muted); font-size: 12px;">${roleBadge}</td>
             <td>${(al.target_pct * 100).toFixed(1)}%</td>
             <td>${(al.actual_pct * 100).toFixed(1)}%</td>
             <td>${ITA.usd(al.target_usd)}</td>

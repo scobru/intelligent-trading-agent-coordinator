@@ -139,6 +139,10 @@ class Coordinator:
             dynamic_weights=ai_report.get("dynamic_weights")
         )
 
+        if alloc_plan.get("pruned_notes"):
+            for p_note in alloc_plan["pruned_notes"]:
+                logger.info("   -> [Soglia Minima] %s", p_note)
+
         executed_actions = 0
         if alloc_plan["rebalance_needed"]:
             logger.info("   -> Rilevate %d azioni di ribilanciamento consigliate:", len(alloc_plan["actions"]))
