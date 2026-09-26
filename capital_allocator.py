@@ -30,13 +30,15 @@ class CapitalAllocator:
     def adjust_weights_for_viability(
         self,
         base_weights: Dict[str, float],
-        total_net_worth: float
+        total_net_worth: float,
+        agents_status: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Tuple[Dict[str, float], List[str]]:
         """
         Adatta i pesi target in base alle soglie minime di capitale operativo di ciascun bot.
         Se un bot riceverebbe un capitale inferiore alla sua soglia minima operativa
-        (es. Neutral < $150), il suo peso viene azzerato e ridistribuito proporzionalmente
-        sulle altre strategie attive o su Yield/Tesoreria.
+        (es. Neutral < $150), e non ha posizioni attive né saldo sufficiente,
+        il suo peso viene azzerato e ridistribuito proporzionalmente sulle altre strategie attive.
+        I bot già operativi con posizioni aperte o saldo >= soglia (es. Perp) vengono mantenuti attivi.
         """
         if not self.enable_pruning or total_net_worth <= 0:
             return dict(base_weights), []
@@ -54,7 +56,12 @@ class CapitalAllocator:
                 target_usd = total_net_worth * w
                 if target_usd < min_cap:
                     shortfall = min_cap - target_usd
-                    below_threshold.append((agent_id, w, target_usd, min_cap, shortfall))
+                    st = agents_status.get(agent_id, {}) if agents_status else {}
+                    pos_cnt = int(st.get("positions_count", 0))
+                    actual_usd = float(st.get("equity_usd", 0.0) or st.get("balance_usd", 0.0) or 0.0)
+                    is_active_or_funded = (pos_cnt > 0 or actual_usd >= min_cap) and (min_cap <= total_net_worth)
+
+                    below_threshold.append((agent_id, w, target_usd, min_cap, shortfall, is_active_or_funded))
 
             if not below_threshold:
                 break
@@ -62,19 +69,24 @@ class CapitalAllocator:
             active_agents = [aid for aid, w in weights.items() if w > 0.0]
             if len(active_agents) <= 1:
                 break
-            # Se TUTTI gli agenti attivi sono sotto soglia, parcheggia tutto su yield
-            if len(below_threshold) == len(active_agents):
-                if "yield" in weights:
-                    for aid in weights:
-                        weights[aid] = 1.0 if aid == "yield" else 0.0
+
+            # Se tutti gli agenti sotto soglia sono già attivi/finanziati (es. Perp con trade aperto),
+            # aumentiamo il loro peso al minimo sostenibile prelevando da Yield o altre strategie capienti
+            prunable = [item for item in below_threshold if not item[5]]
+            if not prunable:
+                # Tutti i bot sotto soglia hanno posizioni o capitale sufficiente: adeguamento pesi
+                for item in below_threshold:
+                    aid, w, target_usd, min_cap, _, _ = item
+                    needed_w = min_cap / total_net_worth
+                    weights[aid] = max(weights[aid], needed_w)
                 break
 
             # Chi ha un min_cap > total_net_worth non potrà mai essere finanziato dal portafoglio attuale
-            impossible = [item for item in below_threshold if item[3] > total_net_worth]
+            impossible = [item for item in prunable if item[3] > total_net_worth]
             if impossible:
                 target_to_prune = sorted(impossible, key=lambda x: x[3], reverse=True)[0]
             else:
-                target_to_prune = sorted(below_threshold, key=lambda x: x[2] / max(x[3], 0.01))[0]
+                target_to_prune = sorted(prunable, key=lambda x: x[2] / max(x[3], 0.01))[0]
 
             agent_to_prune = target_to_prune[0]
             pruned_w = weights[agent_to_prune]
@@ -133,8 +145,8 @@ class CapitalAllocator:
                 "pruned_notes": []
             }
 
-        # Applica il filtro di sostenibilità operativa / pruning del capitale
-        weights, pruned_notes = self.adjust_weights_for_viability(raw_weights, total_net_worth)
+        # Applica il filtro di sostenibilità operativa / pruning del capitale (con awareness dello stato attivo)
+        weights, pruned_notes = self.adjust_weights_for_viability(raw_weights, total_net_worth, agents_status=agents_status)
 
         allocations = {}
         overweight = []
@@ -253,20 +265,19 @@ class CapitalAllocator:
             # Priorità della sorgente:
             # 1. Master Treasury se ha saldo disponibile
             # 2. Altrimenti, l'agente con il surplus più cospicuo tra quelli non ancora gestiti
-            source = "master_treasury"
+            source = None
             remaining_overweight = [o for o in overweight if o[0] not in handled_overweight]
 
-            if treasury_cash_usd >= self.min_rebalance_usd:
+            if treasury_cash_usd >= 5.0:
                 source = "master_treasury"
+                amount_to_fund = min(remaining_deficit, treasury_cash_usd)
             elif remaining_overweight:
                 sorted_over = sorted(remaining_overweight, key=lambda x: x[1], reverse=True)
                 source = sorted_over[0][0]
-            elif treasury_cash_usd >= 5.0:
-                source = "master_treasury"
-
-            amount_to_fund = min(remaining_deficit, 1000.0)  # Cap conservativo per transazione
-            if source == "master_treasury" and treasury_cash_usd > 0:
-                amount_to_fund = min(amount_to_fund, treasury_cash_usd)
+                amount_to_fund = min(remaining_deficit, sorted_over[0][1])
+            else:
+                # Nessuna sorgente con liquidità disponibile per finanziare questo deficit
+                continue
 
             min_threshold = min(self.min_rebalance_usd, 5.0) if source == "master_treasury" else self.min_rebalance_usd
             if amount_to_fund >= min_threshold:

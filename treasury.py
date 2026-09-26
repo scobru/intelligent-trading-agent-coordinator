@@ -202,6 +202,18 @@ class Treasury:
         to_check = Web3.to_checksum_address(to_address)
         amount_raw = int(amount_usd * 1e6)
 
+        # Verifica saldo on-chain effettivo per evitare revert dovuti ad arrotondamenti float
+        actual_raw = self.usdc_contract.functions.balanceOf(account.address).call()
+        if amount_raw > actual_raw:
+            if amount_raw - actual_raw <= 50_000:  # tolleranza fino a 0.05$ di scarto float
+                amount_raw = actual_raw
+            else:
+                raise ValueError(f"Saldo USDC on-chain insufficiente ({actual_raw / 1e6:.6f} USDC < {amount_usd:.6f} USDC)")
+
+        if amount_raw <= 0:
+            logger.warning("Importo USDC da trasferire nullo o negativo (%d raw). Operazione saltata.", amount_raw)
+            return None
+
         nonce = self.w3.eth.get_transaction_count(account.address, "pending")
         fn = self.usdc_contract.functions.transfer(to_check, amount_raw)
         gas_est = fn.estimate_gas({"from": account.address})
@@ -351,7 +363,7 @@ class Treasury:
                 )
                 return False
 
-            actual_amount = round(min(amount, avail_usdc), 2)
+            actual_amount = min(amount, avail_usdc)
             tx_h = self.transfer_usdc(to_wallet, actual_amount, sender_private_key=sender_pk)
             db_utils.log_operation(
                 op_type=action.get("action", "TRANSFER_USDC"),
