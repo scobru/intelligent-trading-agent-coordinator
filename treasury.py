@@ -329,7 +329,8 @@ class Treasury:
 
             raw_usdc = self.usdc_contract.functions.balanceOf(account.address).call()
             avail_usdc = float(raw_usdc) / 1e6
-            min_reb = min(config.MIN_REBALANCE_USD, 5.0)
+            is_sweep = action.get("action") in ("SWEEP_IDLE_FUNDS", "WITHDRAW_TO_SAFE_HAVEN")
+            min_reb = min(config.MIN_REBALANCE_USD, getattr(config, "MIN_SWEEP_IDLE_USD", 1.0)) if is_sweep else min(config.MIN_REBALANCE_USD, 5.0)
 
             # Se il mittente è un sub-agent e non ha abbastanza USDC liquidi nel wallet:
             # tenta di liberare fondi vendendo token (es. Degen) o chiudendo/ritirando da Gate (es. Perp)

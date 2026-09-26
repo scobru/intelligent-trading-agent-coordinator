@@ -144,50 +144,50 @@ def get_agent_private_key(agent_id: str) -> str:
 # --- Matrici di Allocazione Target per Regime (%) ---
 # Somma sempre 100% (1.00)
 REGIME_TARGET_WEIGHTS = {
-    # Mercato neutrale / standard
+    # Mercato neutrale / standard: Degen motore di crescita principale, DCA accumulo e Perp direzionale
     "BALANCED": {
-        "yield": 0.35,     # 35% sicuro a rendimento
-        "dca": 0.25,       # 25% accumulo asset primari
-        "neutral": 0.15,   # 15% funding rate carry
-        "lp": 0.15,        # 15% fee AMM
-        "perp": 0.07,      # 7% direzionale
-        "degen": 0.03      # 3% speculativo
+        "degen": 0.35,     # 35% motore di crescita speculativo (altcoin/meme screening GoPlus)
+        "dca": 0.25,       # 25% accumulo asset primari (WETH/CBTC)
+        "neutral": 0.15,   # 15% funding rate carry (attivo solo se portafoglio capiente >= $1000)
+        "lp": 0.15,        # 15% fee AMM (attivo solo se portafoglio capiente >= $350)
+        "perp": 0.10,      # 10% direzionale a leva
+        "yield": 0.00      # 0% lending (disattivato per micro-capitali, sostituito da degen)
     },
     # Trend rialzista confermato / Greed
     "BULL_MOMENTUM": {
-        "yield": 0.20,
-        "dca": 0.15,
-        "neutral": 0.10,
+        "degen": 0.35,     # 35% momentum su memecoin/altcoin
+        "perp": 0.25,      # 25% leva e trend follower su BTC/ETH
+        "dca": 0.15,       # 15% accumulo continuo
         "lp": 0.15,
-        "perp": 0.25,      # Aumenta leva e trend follower
-        "degen": 0.15      # Spazio alle meme/altcoin in corsa
+        "neutral": 0.10,
+        "yield": 0.00
     },
     # Mercato ribassista / Paura / Panic
     "BEAR_PANIC": {
-        "yield": 0.50,     # Parcheggio sicuro in USDC
-        "dca": 0.30,       # Acquisto del dip a sconto moltiplicato
-        "neutral": 0.15,   # Arbitraggio funding
-        "lp": 0.00,        # Zero LP per evitare impermanent loss asimmetrica
-        "perp": 0.05,      # Solo short o minime coperture
-        "degen": 0.00      # Zero degen durante i crash
+        "dca": 0.50,       # 50% acquisto del dip a sconto moltiplicato
+        "degen": 0.25,     # 25% rimbalzi veloci
+        "neutral": 0.15,   # Arbitraggio funding (se finanziabile)
+        "perp": 0.10,      # Solo coperture / short
+        "lp": 0.00,        # Zero LP per evitare impermanent loss
+        "yield": 0.00
     },
     # Mercato laterale a bassa volatilità (Chop)
     "RANGE_CHOP": {
-        "yield": 0.25,
-        "dca": 0.15,
+        "degen": 0.25,     # 25% breakout trading
+        "dca": 0.20,       # 20% accumulo range
         "neutral": 0.25,   # Cattura funding costante
-        "lp": 0.30,        # Massimizza fee di trading su Uniswap V3 nei range stretti
+        "lp": 0.25,        # Fee di trading su Uniswap V3 nei range stretti
         "perp": 0.05,
-        "degen": 0.00
+        "yield": 0.00
     },
     # Shock improvviso di volatilità / Cigno nero
     "HIGH_VOLATILITY": {
-        "yield": 0.65,     # Massima conservazione in stable
-        "dca": 0.20,
+        "dca": 0.50,       # 50% acquisto a forte sconto
+        "degen": 0.25,     # 25% cattura rimbalzi post-liquidazione
         "neutral": 0.15,
+        "perp": 0.10,      # Minima leva protetta
         "lp": 0.00,        # LP ritira immediatamente le posizioni
-        "perp": 0.00,      # Perp disattivato
-        "degen": 0.00
+        "yield": 0.00
     }
 }
 
@@ -201,6 +201,7 @@ MAX_PERFORMANCE_WEIGHT_SHIFT = _f("MAX_PERFORMANCE_WEIGHT_SHIFT", 0.10)
 INTERVAL_SECONDS = _i("COORDINATOR_INTERVAL_SECONDS", 900)  # Default 15 minuti
 AUTO_REBALANCE = _b("AUTO_REBALANCE", False)
 MIN_REBALANCE_USD = _f("MIN_REBALANCE_USD", 10.0)
+MIN_SWEEP_IDLE_USD = _f("MIN_SWEEP_IDLE_USD", 1.0)          # Soglia minima di recupero per bot a target 0%
 REBALANCE_THRESHOLD_PCT = _f("REBALANCE_THRESHOLD_PCT", 5.0)
 
 # --- Soglie Minime Operative per Agente (USD) ---
@@ -209,10 +210,10 @@ REBALANCE_THRESHOLD_PCT = _f("REBALANCE_THRESHOLD_PCT", 5.0)
 AGENT_MIN_VIABLE_CAPITAL = {
     "neutral": _f("MIN_VIABLE_NEUTRAL_USD", 150.0), # Spot 1x ($70) + Margine Gate ($35) + buffer
     "lp": _f("MIN_VIABLE_LP_USD", 50.0),            # Concentrated LP + recentering fees
+    "yield": _f("MIN_VIABLE_YIELD_USD", 50.0),      # Lending ha senso solo sopra $50
     "perp": _f("MIN_VIABLE_PERP_USD", 15.0),        # Con leva 5x copre il minimo nozionale di $70
     "degen": _f("MIN_VIABLE_DEGEN_USD", 15.0),      # Minimo swap altcoin e slippage
     "dca": _f("MIN_VIABLE_DCA_USD", 10.0),          # Minimo acquisto ricorrente spot
-    "yield": _f("MIN_VIABLE_YIELD_USD", 5.0),        # Lending vault / safe haven
 }
 
 ENABLE_CAPITAL_PRUNING = _b("ENABLE_CAPITAL_PRUNING", True)

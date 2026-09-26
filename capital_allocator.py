@@ -104,6 +104,10 @@ class CapitalAllocator:
                 for aid in weights:
                     if weights[aid] > 0.0:
                         weights[aid] += (weights[aid] / remaining_sum) * pruned_w
+            elif "degen" in weights and weights.get("degen", 0.0) > 0:
+                weights["degen"] = 1.0
+            elif "dca" in weights:
+                weights["dca"] = 1.0
             elif "yield" in weights:
                 weights["yield"] = 1.0
 
@@ -151,6 +155,7 @@ class CapitalAllocator:
         allocations = {}
         overweight = []
         underweight = []
+        min_sweep_idle = getattr(config, "MIN_SWEEP_IDLE_USD", 1.0)
 
         for agent_id, target_pct in weights.items():
             actual_usd = agents_equity.get(agent_id, 0.0)
@@ -175,26 +180,35 @@ class CapitalAllocator:
                 "is_viable": is_viable
             }
 
+            is_zero_target_with_funds = (target_pct == 0.0 and actual_usd >= min_sweep_idle)
+
             if drift_usd > self.min_rebalance_usd and drift_pct > self.rebalance_threshold_pct:
                 overweight.append((agent_id, drift_usd))
+            elif is_zero_target_with_funds:
+                overweight.append((agent_id, actual_usd))
             elif drift_usd < -self.min_rebalance_usd and drift_pct < -self.rebalance_threshold_pct:
                 underweight.append((agent_id, abs(drift_usd)))
 
         actions: List[Dict[str, Any]] = []
         handled_overweight = set()
 
-        # 1. Regola Speciale per Alta Volatilita' / Panic: Svuota LP verso Yield
-        if regime in ("HIGH_VOLATILITY", "BEAR_PANIC") and agents_equity.get("lp", 0.0) > self.min_rebalance_usd:
+        # 1. Regola Speciale per Alta Volatilita' / Panic: Svuota LP verso Degen o DCA
+        dest_safe = "degen" if weights.get("degen", 0.0) > 0 else ("dca" if weights.get("dca", 0.0) > 0 else "yield")
+        if regime in ("HIGH_VOLATILITY", "BEAR_PANIC") and agents_equity.get("lp", 0.0) > min_sweep_idle:
             lp_bal = agents_equity.get("lp", 0.0)
-            actions.append({
-                "action": "WITHDRAW_TO_SAFE_HAVEN",
-                "from_agent": "lp",
-                "to_agent": "yield",
-                "amount_usd": round(lp_bal, 2),
-                "asset": "USDC",
-                "reason": f"Regime {regime}: Ritiro liquidita' LP concentrata per azzerare Impermanent Loss."
-            })
-            handled_overweight.add("lp")
+            st_lp = agents_status.get("lp", {})
+            op_lp = float(st_lp.get("equity_usd", 0.0) or st_lp.get("balance_usd", 0.0) or 0.0)
+            amount_lp = min(lp_bal, op_lp) if op_lp > 0 else lp_bal
+            if amount_lp >= min_sweep_idle:
+                actions.append({
+                    "action": "WITHDRAW_TO_SAFE_HAVEN",
+                    "from_agent": "lp",
+                    "to_agent": dest_safe,
+                    "amount_usd": round(amount_lp, 2),
+                    "asset": "USDC",
+                    "reason": f"Regime {regime}: Ritiro liquidita' LP concentrata per azzerare Impermanent Loss verso {dest_safe.upper()}."
+                })
+                handled_overweight.add("lp")
 
         # 2. Sweeping di profitti o recupero di capitale inerte (Idle Capital Recovery)
         # Se un bot è sovrappesato:
@@ -214,27 +228,32 @@ class CapitalAllocator:
             is_zero_target_idle = (tgt_usd == 0.0 and pos_cnt == 0)
 
             if is_zero_target_idle or is_idle_sub_threshold:
-                # Destinazione: bot con il deficit più elevato tra quelli attivi, altrimenti Yield o Master Treasury
-                target_dest = "yield"
+                # Destinazione: bot con il deficit più elevato tra quelli attivi, altrimenti Degen, DCA o Master Treasury
+                target_dest = "degen" if weights.get("degen", 0.0) > 0 else ("dca" if weights.get("dca", 0.0) > 0 else "yield")
                 if underweight:
                     valid_under = [u for u in underweight if allocations.get(u[0], {}).get("target_usd", 0.0) > 0]
                     if valid_under:
                         target_dest = sorted(valid_under, key=lambda x: x[1], reverse=True)[0][0]
 
-                actions.append({
-                    "action": "SWEEP_IDLE_FUNDS",
-                    "from_agent": agent_id,
-                    "to_agent": target_dest,
-                    "amount_usd": round(surplus, 2),
-                    "asset": "USDC",
-                    "reason": (
-                        f"Recupero capitale inerte da {agent_id.upper()}: saldo attuale ${actual_usd:.2f} "
-                        f"insufficiente per operare (minimo ${min_cap:.0f}, target $0). Spostamento a {target_dest.upper()}."
-                    )
-                })
-                handled_overweight.add(agent_id)
+                # Calcola l'effettivo importo operativo USDC svincolabile (esclude riserve gas ETH)
+                op_usdc = float(st.get("equity_usd", 0.0) or st.get("balance_usd", 0.0) or 0.0)
+                amount_to_sweep = min(surplus, op_usdc) if op_usdc > 0 else surplus
+
+                if amount_to_sweep >= min_sweep_idle:
+                    actions.append({
+                        "action": "SWEEP_IDLE_FUNDS",
+                        "from_agent": agent_id,
+                        "to_agent": target_dest,
+                        "amount_usd": round(amount_to_sweep, 2),
+                        "asset": "USDC",
+                        "reason": (
+                            f"Recupero capitale inerte da {agent_id.upper()}: saldo attuale ${actual_usd:.2f} "
+                            f"(operativo: ${op_usdc:.2f}, target $0). Spostamento a {target_dest.upper()}."
+                        )
+                    })
+                    handled_overweight.add(agent_id)
             elif agent_id in ("degen", "perp"):
-                target_dest = "yield"
+                target_dest = "dca" if weights.get("dca", 0.0) > 0 else "yield"
                 actions.append({
                     "action": "SWEEP_PROFIT",
                     "from_agent": agent_id,

@@ -65,20 +65,24 @@ class AiStrategist:
 
             # 2. Allineamento con il regime di mercato
             if regime in ("BEAR_PANIC", "HIGH_VOLATILITY"):
-                if aid == "yield":
-                    score += 2.0  # Yield è il rifugio primario
-                elif aid in ("degen", "perp"):
-                    score -= 2.0  # Troppo rischiosi nel panico
+                if aid == "dca":
+                    score += 2.0  # DCA accumulo a forte sconto
+                elif aid == "degen":
+                    score += 0.5  # Reattività sui rimbalzi
+                elif aid == "perp":
+                    score -= 1.0  # Rischio leva
                 elif aid == "lp":
                     score -= 2.5  # Rischio impermanent loss elevatissimo
             elif regime == "BULL_MOMENTUM":
                 if aid in ("degen", "perp"):
-                    score += 1.5  # Catturano il rally rialzista
+                    score += 2.0  # Catturano il rally rialzista (alpha e leva)
                 elif aid == "dca":
                     score += 1.0
             elif regime == "RANGE_CHOP":
-                if aid in ("neutral", "lp"):
-                    score += 2.0  # Ideali per funding e fee in laterale
+                if aid == "degen":
+                    score += 1.5  # Breakout su meme/altcoin indipendenti
+                elif aid == "dca":
+                    score += 1.5  # Accumulo nei minimi del range
 
             # 3. Attività e vitalità
             if not st.get("online"):
@@ -112,8 +116,8 @@ class AiStrategist:
 
         # Ordina per score decrescente
         sorted_ranks = sorted(scores.values(), key=lambda x: x["score"], reverse=True)
-        best = sorted_ranks[0]["agent_id"] if sorted_ranks else "yield"
-        worst = sorted_ranks[-1]["agent_id"] if sorted_ranks else "degen"
+        best = sorted_ranks[0]["agent_id"] if sorted_ranks else "degen"
+        worst = sorted_ranks[-1]["agent_id"] if sorted_ranks else "lp"
 
         return {
             "rankings": sorted_ranks,
@@ -292,8 +296,8 @@ class AiStrategist:
             shift = min(self.max_shift, base_weights.get(worst_strat, 0.0) * 0.5)
             if shift >= 0.02:
                 dynamic_weights[worst_strat] = max(0.0, round(dynamic_weights[worst_strat] - shift, 4))
-                # Se siamo in panic, il surplus va a yield, altrimenti alla migliore strategia
-                target_beneficiary = "yield" if regime in ("BEAR_PANIC", "HIGH_VOLATILITY") else best_strat
+                # Se siamo in panic, il surplus va a dca, altrimenti alla migliore strategia
+                target_beneficiary = "dca" if regime in ("BEAR_PANIC", "HIGH_VOLATILITY") else best_strat
                 dynamic_weights[target_beneficiary] = round(dynamic_weights.get(target_beneficiary, 0.0) + shift, 4)
 
         result = {

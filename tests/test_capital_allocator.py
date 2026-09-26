@@ -41,7 +41,7 @@ def test_small_portfolio_pruning_neutral_and_lp():
     assert allocs["lp"]["pruned"] is True
 
     # Viable strategies receive the redistributed capital
-    assert allocs["yield"]["target_usd"] > 0.0
+    assert allocs["degen"]["target_usd"] > 0.0
     assert allocs["dca"]["target_usd"] > 0.0
 
     # Verify that an idle capital recovery action was generated for the trapped $29.92 on Neutral
@@ -49,7 +49,7 @@ def test_small_portfolio_pruning_neutral_and_lp():
     sweep_actions = [a for a in actions if a["action"] == "SWEEP_IDLE_FUNDS" and a["from_agent"] == "neutral"]
     assert len(sweep_actions) == 1
     assert sweep_actions[0]["amount_usd"] == 29.92
-    assert sweep_actions[0]["to_agent"] in ("dca", "yield", "perp")
+    assert sweep_actions[0]["to_agent"] in ("dca", "degen", "perp")
     assert "Recupero capitale inerte da NEUTRAL" in sweep_actions[0]["reason"]
 
 
@@ -124,10 +124,10 @@ def test_active_positions_not_swept_as_idle():
     assert len(sweep_idle) == 0
 
 
-def test_tiny_portfolio_all_parks_in_yield():
+def test_tiny_portfolio_all_parks_in_dca():
     allocator = CapitalAllocator()
 
-    # Extreme scenario: Total portfolio is only $4.00, below all minimums including yield ($5.00)
+    # Extreme scenario: Total portfolio is only $4.00, below all minimums -> DCA has lowest barrier
     agents_status = {
         "neutral": {"equity_usd": 4.0, "positions_count": 0, "online": True},
     }
@@ -139,6 +139,6 @@ def test_tiny_portfolio_all_parks_in_yield():
     )
 
     assert plan["total_net_worth_usd"] == 4.0
-    # Should park 100% in yield
-    assert plan["allocations"]["yield"]["target_pct"] == 1.0
-    assert plan["allocations"]["yield"]["target_usd"] == 4.0
+    # Should park 100% in dca (lowest viable barrier)
+    assert plan["allocations"]["dca"]["target_pct"] == 1.0
+    assert plan["allocations"]["dca"]["target_usd"] == 4.0

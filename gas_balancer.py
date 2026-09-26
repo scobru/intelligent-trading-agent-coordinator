@@ -65,11 +65,20 @@ class GasBalancer:
                 "refueled": False
             }
 
-        # 2. Identifica i bot che necessitano di gas, prioritizzando chi ha saldo a 0
-        needy_bots = [
-            aid for aid, rep in wallet_reports.items()
-            if rep["status"] in ("CRITICAL_LOW", "WARN_LOW") and rep["wallet"]
-        ]
+        # 2. Identifica i bot che necessitano di gas, prioritizzando chi ha saldo a 0.
+        # Salta i bot dormienti (target 0% e zero posizioni aperte) per evitare dispersione di ETH
+        needy_bots = []
+        for aid, rep in wallet_reports.items():
+            if rep["status"] in ("CRITICAL_LOW", "WARN_LOW") and rep["wallet"]:
+                st = agents_status.get(aid, {})
+                pos_cnt = int(st.get("positions_count", 0))
+                tgt_pct = float(st.get("target_pct", 1.0))
+                # Se il bot è disattivato a target 0 e non ha posizioni, non inviare gas inutile
+                if tgt_pct <= 0.0 and pos_cnt == 0:
+                    logger.debug("GasBalancer: %s è dormiente (target 0%%, 0 posizioni). Refuel saltato.", aid)
+                    continue
+                needy_bots.append(aid)
+
         needy_bots.sort(key=lambda aid: current_gas_balances[aid])
 
         # Se il refuel automatico è disattivato o non ci sono bot bisognosi, ritorna subito
