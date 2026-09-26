@@ -26,9 +26,11 @@ class RiskEngine:
         treasury_eth_usd = round(treasury_eth * eth_price, 2) if eth_price > 0 else 0.0
         total_treasury_usd = round(treasury_cash_usd + treasury_eth_usd, 2)
         total_equity = total_treasury_usd
-        net_long_usd = 0.0
+        net_long_usd = round(treasury_eth_usd, 2)
         net_short_usd = 0.0
         warnings: List[str] = []
+        total_gas_eth = float(treasury_eth or 0.0)
+        total_gas_usd = float(treasury_eth_usd or 0.0)
 
         for agent_id, st in agents_status.items():
             eq = float(st.get("equity_usd", 0.0) or st.get("balance_usd", 0.0) or 0.0)
@@ -36,7 +38,10 @@ class RiskEngine:
             gas_usd = round(gas_eth * eth_price, 2) if eth_price > 0 else 0.0
             st["gas_usd"] = gas_usd
             st["total_val_usd"] = round(eq + gas_usd, 2)
-            total_equity += eq
+            total_equity += st["total_val_usd"]
+            total_gas_eth += gas_eth
+            total_gas_usd += gas_usd
+            net_long_usd += gas_usd
             pos_list = st.get("positions", [])
 
             # Calcolo esposizione direzionale (Delta) per strategia
@@ -131,6 +136,8 @@ class RiskEngine:
 
         return {
             "total_net_worth_usd": round(total_equity, 2),
+            "total_gas_eth": round(total_gas_eth, 6),
+            "total_gas_usd": round(total_gas_usd, 2),
             "pnl_24h_usd": round(pnl_24h_usd, 2),
             "pnl_24h_pct": round(pnl_24h_pct, 2),
             "all_time_high_usd": round(ath_usd, 2),

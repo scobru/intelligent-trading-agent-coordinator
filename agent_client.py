@@ -113,6 +113,14 @@ class AgentClient:
             gas = balances["ETH"]
         elif "gas_eth" in raw and raw["gas_eth"] is not None:
             gas = raw["gas_eth"]
+        elif "gas_eth" in st and st["gas_eth"] is not None:
+            gas = st["gas_eth"]
+        elif paper and "eth" in paper and paper["eth"] is not None:
+            gas = paper["eth"]
+        elif paper and "eth_balance" in paper and paper["eth_balance"] is not None:
+            gas = paper["eth_balance"]
+        elif paper and "balances" in paper and isinstance(paper["balances"], dict) and "ETH" in paper["balances"]:
+            gas = paper["balances"]["ETH"]
 
         if gas is not None:
             try:
@@ -229,6 +237,21 @@ class AgentClient:
                         b_val = float(pdata.get("balance", pdata.get("collateral", pdata.get("initial_usdc", 0.0))))
                         if "balances" in pdata and isinstance(pdata["balances"], dict):
                             b_val = float(pdata["balances"].get("USDC", b_val))
+                            if "ETH" in pdata["balances"] and pdata["balances"]["ETH"] is not None:
+                                try:
+                                    res["gas_eth"] = float(pdata["balances"]["ETH"])
+                                except (ValueError, TypeError):
+                                    pass
+                        if "eth" in pdata and pdata["eth"] is not None:
+                            try:
+                                res["gas_eth"] = float(pdata["eth"])
+                            except (ValueError, TypeError):
+                                pass
+                        elif "initial_eth" in pdata and res.get("gas_eth", 0.0) == 0.0:
+                            try:
+                                res["gas_eth"] = float(pdata["initial_eth"])
+                            except (ValueError, TypeError):
+                                pass
                         res["balance_usd"] = b_val
                         res["equity_usd"] = float(pdata.get("equity", pdata.get("total_value_usd", b_val)))
                         res["status"] = "offline (cached state)"

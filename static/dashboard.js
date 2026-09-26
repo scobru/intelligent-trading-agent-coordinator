@@ -174,18 +174,44 @@
   // Grafico a linee con i colori del progetto (--primary / --accent)
   function lineChart(existing, canvas, labels, series) {
     if (!window.Chart || !canvas) return existing;
-    const palette = [cssVar('--primary'), cssVar('--accent'), cssVar('--paper')];
-    const datasets = series.map((s, i) => ({
-      label: s.label, data: s.data, borderColor: palette[i % palette.length],
-      backgroundColor: i === 0 ? palette[0] + '22' : 'transparent', fill: i === 0,
-      borderWidth: i === 0 ? 2.5 : 1.5, borderDash: i === 0 ? [] : [4, 4],
-      tension: .25, pointRadius: labels.length > 60 ? 0 : 2,
-    }));
-    if (existing) {
-      existing.data.labels = labels; existing.data.datasets = datasets; existing.update('none');
-      return existing;
+
+    // Recupera eventuale istanza già agganciata al canvas per evitare collisioni
+    const registered = window.Chart.getChart ? window.Chart.getChart(canvas) : null;
+    const current = existing || registered;
+
+    const p0 = cssVar('--primary') || '#8b5cf6';
+    const p1 = cssVar('--accent') || '#a78bfa';
+    const p2 = cssVar('--paper') || '#10b981';
+    const palette = [p0, p1, p2];
+    const datasets = series.map((s, i) => {
+      const color = palette[i % palette.length];
+      const bg = (i === 0) ? (color.startsWith('#') && color.length === 7 ? color + '22' : 'rgba(139, 92, 246, 0.15)') : 'transparent';
+      return {
+        label: s.label,
+        data: s.data,
+        borderColor: color,
+        backgroundColor: bg,
+        fill: i === 0,
+        borderWidth: i === 0 ? 2.5 : 1.5,
+        borderDash: i === 0 ? [] : [4, 4],
+        tension: .25,
+        pointRadius: labels.length > 60 ? 0 : 3,
+        pointHoverRadius: 5
+      };
+    });
+
+    if (current) {
+      current.data.labels = labels;
+      current.data.datasets = datasets;
+      current.update('none');
+      return current;
     }
-    const muted = cssVar('--muted'), grid = cssVar('--border');
+
+    if (registered) {
+      try { registered.destroy(); } catch (e) {}
+    }
+
+    const muted = cssVar('--muted') || '#9ca3af', grid = cssVar('--border') || '#1e2942';
     return new Chart(canvas, {
       type: 'line', data: { labels, datasets },
       options: {
@@ -196,7 +222,7 @@
         },
         scales: {
           x: { ticks: { color: muted, maxTicksLimit: 8 }, grid: { color: grid } },
-          y: { ticks: { color: muted, callback: (v) => '$' + v }, grid: { color: grid } },
+          y: { ticks: { color: muted, callback: (v) => '$' + Number(v).toLocaleString('it-IT') }, grid: { color: grid } },
         },
       },
     });

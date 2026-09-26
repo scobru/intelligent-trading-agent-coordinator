@@ -47,6 +47,7 @@ class GasBalancer:
                     logger.debug("Impossibile leggere balance ETH per %s: %s", agent_id, exc)
 
             current_gas_balances[agent_id] = gas_eth
+            st["gas_eth"] = gas_eth
 
             if gas_eth < self.min_reserve_eth:
                 status = "CRITICAL_LOW"

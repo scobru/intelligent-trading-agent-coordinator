@@ -84,16 +84,23 @@ class Coordinator:
         logger.info("   -> Master Treasury: $%.2f USDC + %.4f ETH ($%.2f) = Valore Totale $%.2f",
                     treasury_usdc, treasury_eth, treasury_eth_usd, treasury_total_usd)
 
-        # 4. Valutazione Rischio Globale, Delta Netto e Circuit Breaker
-        logger.info("4/8 Valutazione del Rischio e Delta Netto...")
+        # 4. Gas Balancing & Refuel automatico
+        logger.info("4/8 Verifica riserve Gas ETH su Base...")
+        gas_report = self.gas_balancer.check_wallets_gas(agents_status, treasury_executor=self.treasury)
+        if gas_report["refuels_performed"] > 0:
+            logger.info("   -> Eseguiti %d refuel di gas (Totale: %.4f ETH).",
+                        gas_report["refuels_performed"], gas_report["total_eth_sent"])
+
+        # 5. Valutazione Rischio Globale, Delta Netto e Circuit Breaker
+        logger.info("5/8 Valutazione del Rischio e Delta Netto (inclusi ETH fee di tutti i bot)...")
         risk_data = self.risk_engine.evaluate_portfolio_risk(
             agents_status=agents_status,
             treasury_cash_usd=treasury_usdc,
             treasury_eth=treasury_eth,
             eth_price=eth_price
         )
-        logger.info("   -> Net Worth Totale: $%.2f | PnL 24h: $%.2f (%.2f%%)",
-                    risk_data["total_net_worth_usd"], risk_data["pnl_24h_usd"], risk_data["pnl_24h_pct"])
+        logger.info("   -> Net Worth Totale: $%.2f (Fondi + Gas ETH: %.4f ETH) | PnL 24h: $%.2f (%.2f%%)",
+                    risk_data["total_net_worth_usd"], risk_data.get("total_gas_eth", 0.0), risk_data["pnl_24h_usd"], risk_data["pnl_24h_pct"])
         logger.info("   -> Delta Netto: $%.2f (Ratio: %.1f%%) | Rischio: %s",
                     risk_data["net_delta_usd"], risk_data["net_delta_ratio"] * 100, risk_data["risk_level"])
 
@@ -107,13 +114,6 @@ class Coordinator:
             self.agent_client.emergency_stop_all(
                 reason=f"Circuit Breaker attivato dal Coordinator (drawdown 24h: {risk_data.get('pnl_24h_pct', 0.0):.2f}%)"
             )
-
-        # 5. Gas Balancing & Refuel automatico
-        logger.info("5/8 Verifica riserve Gas ETH su Base...")
-        gas_report = self.gas_balancer.check_wallets_gas(agents_status, treasury_executor=self.treasury)
-        if gas_report["refuels_performed"] > 0:
-            logger.info("   -> Eseguiti %d refuel di gas (Totale: %.4f ETH).",
-                        gas_report["refuels_performed"], gas_report["total_eth_sent"])
 
         # 6. Analisi AI Strategist & Performance Ranking
         logger.info("6/8 Analisi AI Strategist (OpenRouter / Fallback Deterministico)...")
@@ -135,7 +135,7 @@ class Coordinator:
         alloc_plan = self.capital_allocator.compute_allocation_plan(
             regime=regime,
             agents_status=agents_status,
-            treasury_cash_usd=treasury_usdc,
+            treasury_cash_usd=treasury_total_usd,
             dynamic_weights=ai_report.get("dynamic_weights")
         )
 

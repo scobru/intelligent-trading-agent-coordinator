@@ -60,7 +60,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <link rel="icon" href="/static/favicon.ico">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <link rel="manifest" href="/static/site.webmanifest">
-  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="stylesheet" href="/static/dashboard.css?v=2">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root {
       --primary: #8b5cf6;
@@ -220,6 +221,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <h3>Net Worth Consolidato</h3>
       <div class="val" id="total-net-worth">--</div>
       <div class="sub" id="pnl-24h">PnL 24h: --</div>
+      <div class="sub" id="net-worth-note" style="font-size: 11px; margin-top: 4px; color: var(--accent);">Fondi operativi + riserve gas ETH</div>
     </div>
     <div class="card">
       <h3>Regime di Mercato</h3>
@@ -264,8 +266,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <!-- SEZIONE GRAFICO EQUITY -->
   <div class="card" style="margin-bottom: 24px;">
-    <h3>Andamento del Valore Complessivo (Equity Curve)</h3>
-    <div id="chart-container" style="height: 180px; width: 100%;"></div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+      <h3 style="margin: 0;">Andamento del Valore Complessivo (Equity Curve)</h3>
+      <span id="chart-info" style="font-size: 11px; color: var(--muted);">Caricamento dati...</span>
+    </div>
+    <div class="chart-box" style="height: 240px; position: relative;">
+      <canvas id="equity-chart"></canvas>
+      <div id="chart-empty" style="display: none; position: absolute; inset: 0; background: var(--surface); align-items: center; justify-content: center; color: var(--muted); font-size: 13px;">
+        In attesa del primo snapshot di equity... Esegui un ciclo o attendi l'intervallo automatico.
+      </div>
+    </div>
   </div>
 
   <!-- STATO DEI 6 AGENTI SUBORDINATI -->
@@ -318,7 +328,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </table>
   </div>
 
-  <script src="/static/dashboard.js"></script>
+  <script src="/static/dashboard.js?v=2"></script>
   <script>
     let chartInstance = null;
 
@@ -341,6 +351,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       const pnlEl = document.getElementById('pnl-24h');
       pnlEl.textContent = `PnL 24h: ${sign}${ITA.usd(s.pnl_24h_usd)} (${sign}${s.pnl_24h_pct.toFixed(2)}%)`;
       pnlEl.style.color = (s.pnl_24h_usd >= 0) ? 'var(--success)' : 'var(--danger)';
+
+      const gasNote = document.getElementById('net-worth-note');
+      if (gasNote) {
+        const totGasEth = s.risk_data?.total_gas_eth;
+        const totGasUsd = s.risk_data?.total_gas_usd;
+        if (totGasEth !== undefined && totGasEth > 0) {
+          gasNote.textContent = `Inclusi ${totGasEth.toFixed(4)} ETH gas fee (~${ITA.usd(totGasUsd || 0)})`;
+        } else {
+          gasNote.textContent = `Include fondi operativi + riserve gas ETH`;
+        }
+      }
 
       // Regime
       document.getElementById('regime-name').textContent = s.regime || '--';
@@ -408,6 +429,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const gasEth = (a.gas_eth || 0);
         const gasUsd = (a.gas_usd !== undefined) ? a.gas_usd : (gasEth * ethPrice);
         const gasUsdStr = gasUsd > 0 ? ` (~${ITA.usd(gasUsd)})` : '';
+        const opEquity = (a.equity_usd || 0);
+        const totalVal = (a.total_val_usd !== undefined) ? a.total_val_usd : (opEquity + gasUsd);
 
         return `
           <div class="agent-card">
@@ -425,8 +448,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <div style="font-size: 12px; color: var(--muted);">${a.description || ''}</div>
             <div style="display: flex; justify-content: space-between; align-items: baseline;">
               <div>
-                <div style="font-size: 11px; color: var(--muted);">EQUITY ASSEGNATA</div>
-                <div style="font-size: 20px; font-weight: 700;">${ITA.usd(a.equity_usd)}</div>
+                <div style="font-size: 11px; color: var(--muted);">VALORE TOTALE (FONDI + ETH)</div>
+                <div style="font-size: 20px; font-weight: 700;">${ITA.usd(totalVal)}</div>
+                <div style="font-size: 11px; color: var(--muted);">${ITA.usd(opEquity)} operativo + ${gasEth.toFixed(4)} ETH fee</div>
               </div>
               <div style="text-align: right;">
                 <div style="font-size: 11px; color: var(--muted);">QUOTA PORTAFOGLIO</div>
@@ -500,13 +524,50 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     }
 
     function renderChart(snaps) {
-      if (!snaps || snaps.length === 0) return;
-      const el = document.getElementById('chart-container');
-      const labels = snaps.map(s => ITA.time(s.created_at));
-      const values = snaps.map(s => s.total_net_worth_usd);
+      const el = document.getElementById('equity-chart');
+      const emptyEl = document.getElementById('chart-empty');
+      const infoEl = document.getElementById('chart-info');
+      if (!el) return;
+
+      if (!window.Chart) {
+        console.warn('Chart.js non ancora caricato, nuovo tentativo a breve...');
+        setTimeout(() => renderChart(snaps), 250);
+        return;
+      }
+
+      let data = Array.isArray(snaps) ? snaps.slice() : [];
+      if (data.length === 0 && window.currentStatus && window.currentStatus.total_net_worth_usd) {
+        data = [{
+          created_at: new Date().toISOString(),
+          total_net_worth_usd: window.currentStatus.total_net_worth_usd
+        }];
+      }
+
+      if (data.length === 0) {
+        if (emptyEl) emptyEl.style.display = 'flex';
+        if (infoEl) infoEl.textContent = '0 snapshot';
+        return;
+      }
+
+      if (emptyEl) emptyEl.style.display = 'none';
+
+      if (infoEl) {
+        infoEl.textContent = `${data.length} rilevazioni storiche`;
+      }
+
+      // Se c'è solo un dato storico, replichiamo con timestamp precedente per visualizzare una linea orizzontale
+      let chartData = data;
+      if (chartData.length === 1) {
+        const s = chartData[0];
+        const prevTime = new Date(new Date(s.created_at || Date.now()).getTime() - 60000).toISOString();
+        chartData = [{ created_at: prevTime, total_net_worth_usd: s.total_net_worth_usd }, s];
+      }
+
+      const labels = chartData.map(s => ITA.time(s.created_at));
+      const values = chartData.map(s => Number(s.total_net_worth_usd) || 0);
 
       chartInstance = ITA.lineChart(chartInstance, el, labels, [
-        { label: 'Net Worth ($)', data: values }
+        { label: 'Net Worth Totale ($)', data: values }
       ]);
     }
 
@@ -517,6 +578,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
           fetch('/api/snapshots').then(r => r.json()),
           fetch('/api/operations').then(r => r.json())
         ]);
+        window.currentStatus = stRes;
         renderStatus(stRes);
         renderOps(opRes);
         renderChart(snapRes);
