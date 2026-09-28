@@ -22,7 +22,7 @@ class CapitalAllocator:
             "perp": 15.0,
             "degen": 15.0,
             "dca": 10.0,
-            "yield": 5.0
+            "yield": 50.0
         })
         self.enable_pruning = getattr(config, "ENABLE_CAPITAL_PRUNING", True)
         self.enable_idle_sweep = getattr(config, "ENABLE_IDLE_CAPITAL_SWEEP", True)

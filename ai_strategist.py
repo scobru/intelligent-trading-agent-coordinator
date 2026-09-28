@@ -23,12 +23,38 @@ logger = logging.getLogger(__name__)
 TIMEOUT_SECONDS = 12.0
 
 class AiStrategist:
+    # Etichette brevi per il system prompt (label di visualizzazione, non chiavi di config)
+    _MIN_CAP_LABELS = {
+        "neutral": "Neutral (spot 1x + short SynFutures)",
+        "lp": "LP",
+        "perp": "Perp (con leva)",
+        "dca": "DCA",
+        "degen": "Degen",
+        "yield": "Yield",
+    }
+    _MIN_CAP_ORDER = ["neutral", "lp", "perp", "dca", "degen", "yield"]
+
     def __init__(self):
         self.api_key = config.OPENROUTER_API_KEY
         self.model = config.OPENROUTER_MODEL or "deepseek/deepseek-chat"
         self.dynamic_rebalance_enabled = getattr(config, "DYNAMIC_PERFORMANCE_REBALANCE", True)
         self.max_shift = getattr(config, "MAX_PERFORMANCE_WEIGHT_SHIFT", 0.10)
         self.last_analysis: Dict[str, Any] = {}
+
+    def _format_min_viable_thresholds(self) -> str:
+        """
+        Genera la stringa delle soglie minime operative direttamente da
+        config.AGENT_MIN_VIABLE_CAPITAL, cosi' il system prompt inviato all'LLM
+        resta sempre sincronizzato con i valori realmente configurati (anche
+        se sovrascritti via .env) invece di un testo statico che puo' disallinearsi.
+        """
+        caps = getattr(config, "AGENT_MIN_VIABLE_CAPITAL", {})
+        parts = []
+        for agent_id in self._MIN_CAP_ORDER:
+            if agent_id in caps:
+                label = self._MIN_CAP_LABELS.get(agent_id, agent_id.capitalize())
+                parts.append(f"{label} >= ${float(caps[agent_id]):.0f}")
+        return ", ".join(parts)
 
     def evaluate_performances_quantitatively(
         self,
@@ -138,6 +164,8 @@ class AiStrategist:
             "Content-Type": "application/json"
         }
 
+        min_viable_line = self._format_min_viable_thresholds()
+
         payload = {
             "model": self.model,
             "messages": [
@@ -150,7 +178,7 @@ class AiStrategist:
                         "IMPORTANTE: I bot con equity a $0 e 0 posizioni NON sono falliti né liquidati: sono nodi operativi appena avviati in attesa di primo finanziamento. "
                         "Se il regime lo consente, raccomanda di capitalizzarli attingendo dalla Master Treasury o dal surplus di strategie con peso in eccesso. "
                         "Non considerare 'peggiore' o 'liquidata' una strategia solo perché la sua equity è attualmente a 0 per assenza di fondi iniziali. "
-                        "SOGLIE MINIME OPERATIVE: Ciascun bot ha una soglia minima per poter operare: Neutral >= $150 (spot 1x + short SynFutures), LP >= $50, Perp >= $15 (con leva), DCA >= $10, Degen >= $15, Yield >= $5. Se il capitale totale è ridotto, evita di frammentarlo sotto-soglia e concentralo sui bot che possono aprire posizioni reali. "
+                        f"SOGLIE MINIME OPERATIVE: Ciascun bot ha una soglia minima per poter operare: {min_viable_line}. Se il capitale totale è ridotto, evita di frammentarlo sotto-soglia e concentralo sui bot che possono aprire posizioni reali. "
                         "Rispondi ESCLUSIVAMENTE in formato JSON valido senza codice markdown o testo introduttivo con questo schema esatto:\n"
                         "{\n"
                         '  "market_briefing": "Breve sintesi macro e di portafoglio in italiano (max 250 caratteri)",\n'
