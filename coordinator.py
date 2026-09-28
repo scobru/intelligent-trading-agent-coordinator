@@ -74,6 +74,14 @@ class Coordinator:
         logger.info("   -> Regime: %s (Fear & Greed: %d, %s) | Prezzo ETH: $%.2f",
                     regime, regime_data["fear_and_greed"], regime_data["fear_and_greed_label"], eth_price)
 
+        # Pre-popola il target_pct di base (matrice di regime, pre-AI/pruning) su ogni agente:
+        # il Gas Balancer (step 4) ne ha bisogno per riconoscere i bot strutturalmente dormienti
+        # (target 0%) e non sprecare ETH di refuel su di essi, prima che il CapitalAllocator
+        # (step 7) calcoli il piano definitivo con pesi dinamici AI e pruning del capitale.
+        base_regime_weights = config.REGIME_TARGET_WEIGHTS.get(regime, config.REGIME_TARGET_WEIGHTS["BALANCED"])
+        for agent_id, agent_st in agents_status.items():
+            agent_st["target_pct"] = base_regime_weights.get(agent_id, 1.0)
+
         # 3. Lettura saldi Master Treasury con controvalore totale
         logger.info("3/8 Calcolo saldi Master Treasury con controvalore ETH...")
         treasury_bals = self.treasury.get_treasury_balances(eth_price=eth_price)
