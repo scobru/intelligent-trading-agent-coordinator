@@ -124,6 +124,29 @@ def test_active_positions_not_swept_as_idle():
     assert len(sweep_idle) == 0
 
 
+def test_zero_target_bot_with_position_sweeps_liquid_usdc():
+    allocator = CapitalAllocator()
+
+    # Yield (target 0%) ha 1 posizione aperta ma $33.72 USDC liquidi: vanno spostati sui bot sottopesati.
+    agents_status = {
+        "yield": {"equity_usd": 39.14, "balance_usd": 33.72, "positions_count": 1, "online": True},
+        "perp": {"equity_usd": 42.0, "balance_usd": 36.0, "positions_count": 1, "online": True},
+        "degen": {"equity_usd": 53.0, "balance_usd": 48.0, "positions_count": 5, "online": True},
+        "dca": {"equity_usd": 25.0, "balance_usd": 20.0, "positions_count": 3, "online": True},
+    }
+
+    plan = allocator.compute_allocation_plan(
+        regime="BULL_MOMENTUM",
+        agents_status=agents_status,
+        treasury_cash_usd=0.0
+    )
+
+    sweeps = [a for a in plan["actions"] if a["action"] == "SWEEP_IDLE_FUNDS" and a["from_agent"] == "yield"]
+    assert len(sweeps) == 1
+    assert sweeps[0]["amount_usd"] == 33.72
+    assert sweeps[0]["to_agent"] in ("perp", "degen", "dca")
+
+
 def test_tiny_portfolio_all_parks_in_dca():
     allocator = CapitalAllocator()
 

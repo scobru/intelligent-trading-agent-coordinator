@@ -227,7 +227,30 @@ class CapitalAllocator:
             is_idle_sub_threshold = (pos_cnt == 0 and actual_usd < min_cap)
             is_zero_target_idle = (tgt_usd == 0.0 and pos_cnt == 0)
 
-            if is_zero_target_idle or is_idle_sub_threshold:
+            # Bot a target 0% con posizioni aperte (es. Yield con un deposito lending): le posizioni restano,
+            # ma la liquidita' USDC libera va comunque spostata verso i bot sottopesati.
+            liquid_usdc = float(st.get("balance_usd", 0.0) or 0.0)
+            is_zero_target_liquid = (tgt_usd == 0.0 and pos_cnt > 0 and liquid_usdc >= min_sweep_idle)
+
+            if is_zero_target_liquid and not (is_zero_target_idle or is_idle_sub_threshold):
+                target_dest = "degen" if weights.get("degen", 0.0) > 0 else ("dca" if weights.get("dca", 0.0) > 0 else "yield")
+                valid_under = [u for u in underweight if allocations.get(u[0], {}).get("target_usd", 0.0) > 0]
+                if valid_under:
+                    target_dest = sorted(valid_under, key=lambda x: x[1], reverse=True)[0][0]
+                amount_to_sweep = min(surplus, liquid_usdc)
+                actions.append({
+                    "action": "SWEEP_IDLE_FUNDS",
+                    "from_agent": agent_id,
+                    "to_agent": target_dest,
+                    "amount_usd": round(amount_to_sweep, 2),
+                    "asset": "USDC",
+                    "reason": (
+                        f"Recupero USDC liquidi da {agent_id.upper()} (target $0, {pos_cnt} posizioni aperte mantenute): "
+                        f"${liquid_usdc:.2f} liberi. Spostamento a {target_dest.upper()}."
+                    )
+                })
+                handled_overweight.add(agent_id)
+            elif is_zero_target_idle or is_idle_sub_threshold:
                 # Destinazione: bot con il deficit più elevato tra quelli attivi, altrimenti Degen, DCA o Master Treasury
                 target_dest = "degen" if weights.get("degen", 0.0) > 0 else ("dca" if weights.get("dca", 0.0) > 0 else "yield")
                 if underweight:
