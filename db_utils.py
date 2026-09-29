@@ -6,7 +6,7 @@ Traccia snapshot di portafoglio, metriche degli agenti, storico dei ribilanciame
 import json
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import config
@@ -282,3 +282,63 @@ def get_agents_historical_pnl() -> Dict[str, Dict[str, Any]]:
     finally:
         conn.close()
     return performance
+
+
+def get_agents_adjusted_performance(window_hours: float = 24.0) -> Dict[str, Dict[str, Any]]:
+    """
+    Rendimento per agente al netto dei trasferimenti di capitale (rebalance/sweep USDC eseguiti on-chain).
+
+    PnL = equity finale - equity iniziale - flussi netti (entrate - uscite). Le equity degli snapshot sono
+    lette a inizio ciclo, quindi riflettono solo i trasferimenti dei cicli precedenti: i flussi vengono
+    contati fino al timestamp dello snapshot precedente a quello di riferimento/finale.
+    Ritorna, per ogni agente, il rendimento totale (dal primo snapshot) e quello sulla finestra `window_hours`.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    result: Dict[str, Dict[str, Any]] = {}
+    try:
+        cur.execute("SELECT agent_id, created_at, equity_usd FROM agent_snapshots ORDER BY id ASC;")
+        series: Dict[str, List[Any]] = {}
+        for r in cur.fetchall():
+            series.setdefault(r["agent_id"], []).append((r["created_at"], float(r["equity_usd"] or 0.0)))
+
+        cur.execute("""
+            SELECT created_at, from_agent, to_agent, amount FROM rebalance_operations
+            WHERE status = 'SUCCESS' AND asset = 'USDC' ORDER BY id ASC;
+        """)
+        ops = [dict(r) for r in cur.fetchall()]
+
+        def _perf(aid: str, rows: List[Any], ref_idx: int) -> Dict[str, float]:
+            last_idx = len(rows) - 1
+            if last_idx <= ref_idx:
+                return {"pnl_usd": 0.0, "pnl_pct": 0.0}
+            ref_eq = rows[ref_idx][1]
+            lo = rows[ref_idx - 1][0] if ref_idx > 0 else rows[ref_idx][0]
+            hi = rows[last_idx - 1][0]
+            inflow = outflow = 0.0
+            for o in ops:
+                if not (lo < o["created_at"] <= hi):
+                    continue
+                if o["to_agent"] == aid:
+                    inflow += float(o["amount"])
+                if o["from_agent"] == aid:
+                    outflow += float(o["amount"])
+            pnl = rows[last_idx][1] - ref_eq - inflow + outflow
+            base = ref_eq + inflow
+            return {"pnl_usd": round(pnl, 2), "pnl_pct": round(pnl / base * 100.0, 2) if base > 0 else 0.0}
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
+        for aid, rows in series.items():
+            total = _perf(aid, rows, 0)
+            ref = next((i for i in range(len(rows) - 1, -1, -1) if rows[i][0] <= cutoff), 0)
+            win = _perf(aid, rows, ref)
+            result[aid] = {
+                "pnl_usd": total["pnl_usd"], "pnl_pct": total["pnl_pct"],
+                "pnl_window_usd": win["pnl_usd"], "pnl_window_pct": win["pnl_pct"],
+                "window_hours": window_hours, "since": rows[0][0], "snapshots": len(rows),
+            }
+    except Exception as exc:
+        logger.debug("Errore calcolo performance agenti: %s", exc)
+    finally:
+        conn.close()
+    return result

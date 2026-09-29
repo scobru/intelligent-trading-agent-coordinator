@@ -446,12 +446,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
 
       // Render 6 Agents Cards
-      renderAgents(s.agents || {}, s.allocation_plan?.allocations || {}, ai, s.regime_data?.eth_price || 2690);
+      renderAgents(s.agents || {}, s.allocation_plan?.allocations || {}, ai, s.regime_data?.eth_price || 2690, s.performance || {});
 
       renderAllocTable(s.allocation_plan?.allocations || {}, ai);
     }
 
-    function renderAgents(agents, allocs, ai, ethPrice = 2690) {
+    function renderAgents(agents, allocs, ai, ethPrice = 2690, perf = {}) {
       const container = document.getElementById('agents-container');
       const html = Object.keys(agents).map(aid => {
         const a = agents[aid];
@@ -473,6 +473,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const gasUsdStr = gasUsd > 0 ? ` (~${ITA.usd(gasUsd)})` : '';
         const opEquity = (a.equity_usd || 0);
         const totalVal = (a.total_val_usd !== undefined) ? a.total_val_usd : (opEquity + gasUsd);
+        const pf = perf[aid];
+        const pfCell = (label, pct, usd) => {
+          const color = pct > 0 ? 'var(--success)' : (pct < 0 ? 'var(--danger)' : 'var(--muted)');
+          const sign = pct > 0 ? '+' : '';
+          return `<div><div style="font-size: 10px; color: var(--muted);">${label}</div><div style="font-size: 13px; font-weight: 700; color: ${color};">${sign}${pct.toFixed(2)}% <span style="font-size: 11px; font-weight: 500;">(${sign}${ITA.usd(usd)})</span></div></div>`;
+        };
+        const perfHtml = pf
+          ? `<div style="display: flex; justify-content: space-between; gap: 8px;" title="Rendimento al netto dei trasferimenti di capitale tra bot e Master (dal primo snapshot: ${pf.since || '--'})">
+               ${pfCell('RENDIMENTO ' + Math.round(pf.window_hours) + 'H', pf.pnl_window_pct, pf.pnl_window_usd)}
+               ${pfCell('RENDIMENTO TOTALE', pf.pnl_pct, pf.pnl_usd)}
+             </div>`
+          : '';
 
         // PnL storico del bot
         const hasPnl = (a.pnl_pct !== undefined && a.pnl_pct !== null);
@@ -524,6 +536,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <div style="font-size: 14px; font-weight: 600;">${actualPct}% <span style="font-size: 11px; color: var(--muted);">(tgt ${targetPct}%)</span></div>
               </div>
             </div>
+            ${perfHtml}
             <div class="prog-bar">
               <div class="prog-fill" style="width: ${Math.min(100, actualPct)}%; background: ${a.color || 'var(--primary)'};">${''}</div>
             </div>
@@ -878,6 +891,8 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
                         )
                     except Exception:
                         pass
+            if _latest_status_cache:
+                _latest_status_cache["performance"] = db_utils.get_agents_adjusted_performance()
             # Arricchisci agenti con PnL storico se non già presente
             if _latest_status_cache and _latest_status_cache.get("agents"):
                 try:
