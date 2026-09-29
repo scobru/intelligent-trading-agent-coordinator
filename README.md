@@ -4,116 +4,167 @@
 
 <br clear="left">
 
-Agente centrale di **orchestrazione strategica, allocazione del capitale e gestione del rischio globale** per la famiglia di bot su rete **Base (Chain ID 8453)**.
+**English** · [Italiano](README.it.md)
 
-Il Coordinator connette e governa i 6 agenti specializzati dell'ecosistema, modulando dinamicamente il capitale in base ai regimi macroeconomici di mercato e proteggendo il portafoglio tramite controlli di rischio consolidati.
+> ⚠️ **Experimental software, not financial advice.** The coordinator moves real money between the bots on Base and can contribute to losing some or all of the capital. Start in paper mode (the default); when you go live, use dedicated wallets and only amounts you can afford to lose. See the **Disclaimer** section at the bottom.
+
+The central agent for **strategic orchestration, capital allocation and
+global risk management** of the bot family on **Base (chain ID 8453)**.
+
+The coordinator connects and governs the 6 specialized agents of the
+[Intelligent Trading](https://github.com/scobru/intelligent-trading) suite,
+moving capital between them according to the market regime and protecting the
+portfolio with consolidated risk controls.
 
 ---
 
-## 🌟 La Suite Completa dei 6 Nodi Subordinati
+## 🌟 The 6 subordinate agents
 
-| Agente | Strategia Primaria | Focus di Rischio | Protocolli Base |
+| Agent | Primary strategy | Risk focus | Base protocols |
 |---|---|---|---|
-| [intelligent-trading-agent](https://github.com/scobru/intelligent-trading-agent) | **Perpetual direzionale** con leva | Alto / Trend & Momentum | SynFutures V3 (`synfutures-service`) |
-| [intelligent-trading-agent-yield](https://github.com/scobru/intelligent-trading-agent-yield) | **Rendimento passivo** su lending/vault | Minimo / Capitale parcheggiato | Aave V3, Morpho, Moonwell, ERC-4626 |
-| [intelligent-trading-agent-neutral](https://github.com/scobru/intelligent-trading-agent-neutral) | **Delta-Neutral Funding carry** | Basso / Cash & Carry | Uniswap V3 (Spot) + SynFutures V3 (Short) |
-| [intelligent-trading-agent-lp](https://github.com/scobru/intelligent-trading-agent-lp) | **Liquidità concentrata AMM** | Medio / Fee harvesting & IL | Uniswap V3 NonfungiblePositionManager |
-| [intelligent-trading-agent-dca](https://github.com/scobru/intelligent-trading-agent-dca) | **DCA & Rebalancing** ponderato | Medio-basso / Accumulo WETH/BTC | Uniswap V3 con Fear & Greed multiplier |
-| [intelligent-trading-agent-degen](https://github.com/scobru/intelligent-trading-agent-degen) | **Spot speculativo / Meme** | Molto alto / Asimmetrico | Uniswap V3 con screening GoPlus Security |
+| [intelligent-trading-agent-perp](https://github.com/scobru/intelligent-trading-agent-perp) | **Directional perpetuals** with leverage | High / trend & momentum | SynFutures V3 (`synfutures-service`) |
+| [intelligent-trading-agent-yield](https://github.com/scobru/intelligent-trading-agent-yield) | **Passive yield** on lending/vaults | Minimal / parked capital | Aave V3, Morpho, Moonwell, ERC-4626 |
+| [intelligent-trading-agent-neutral](https://github.com/scobru/intelligent-trading-agent-neutral) | **Delta-neutral funding carry** | Low / cash & carry | Uniswap V3 (spot) + SynFutures V3 (short) |
+| [intelligent-trading-agent-lp](https://github.com/scobru/intelligent-trading-agent-lp) | **Concentrated AMM liquidity** | Medium / fee harvesting & IL | Uniswap V3 NonfungiblePositionManager |
+| [intelligent-trading-agent-dca](https://github.com/scobru/intelligent-trading-agent-dca) | Weighted **DCA & rebalancing** | Medium-low / WETH/BTC accumulation | Uniswap V3 with a Fear & Greed multiplier |
+| [intelligent-trading-agent-degen](https://github.com/scobru/intelligent-trading-agent-degen) | **Speculative spot / memecoins** | Very high / asymmetric | Uniswap V3 with GoPlus Security screening |
 
 ---
 
-## 🧠 Funzionalità Chiave dell'Orchestratore
+## 🧠 Key features
 
-### 1. Rilevamento Dinamico del Regime di Mercato (`regime_detector.py`)
-Classifica in tempo reale le condizioni macro del mercato crypto:
-* **`BULL_MOMENTUM`**: Sentiment Greed ($\ge 68$) e trend positivo $\rightarrow$ incrementa budget su Perp (25%) e Degen (15%).
-* **`BEAR_PANIC`**: Extreme Fear ($\le 26$) o crolli $\rightarrow$ 50% parcheggiato in Yield passivo, 30% al DCA sui cali, 0% Degen/LP.
-* **`RANGE_CHOP`**: Bassa volatilità e lateralizzazione $\rightarrow$ massimizza il budget di LP Concentrato (30%) e Funding Carry (25%).
-* **`HIGH_VOLATILITY`**: Shock o oscillazioni estreme $\rightarrow$ 65% in Yield protetto, ritiro immediato della liquidità LP per azzerare l'Impermanent Loss.
-* **`BALANCED`**: Mercato equilibrato standard $\rightarrow$ pesi conservativi proporzionati.
+### 1. Dynamic market regime detection (`regime_detector.py`)
+Classifies macro crypto market conditions in real time:
+* **`BULL_MOMENTUM`**: Greed sentiment ($\ge 68$) and a positive trend $\rightarrow$ more budget for Perp (25%) and Degen (15%).
+* **`BEAR_PANIC`**: Extreme Fear ($\le 26$) or crashes $\rightarrow$ 50% parked in passive Yield, 30% to DCA on the dips, 0% Degen/LP.
+* **`RANGE_CHOP`**: low volatility and sideways markets $\rightarrow$ maximizes the budget for concentrated LP (30%) and funding carry (25%).
+* **`HIGH_VOLATILITY`**: shocks or extreme swings $\rightarrow$ 65% in protected Yield, immediate withdrawal of LP liquidity to stop impermanent loss.
+* **`BALANCED`**: standard balanced market $\rightarrow$ proportional, conservative weights.
 
-### 2. Allocazione e Ribilanciamento Automatico (`capital_allocator.py` & `treasury.py`)
-* **Profit Sweeping**: Drena automaticamente i profitti realizzati dai bot speculativi (Degen, Perp) per consolidarli nella Tesoreria o in Yield.
-* **Idle Cash Recycling**: Se un bot non trova opportunità (es. Degen con zero token sicuri), il capitale inattivo viene allocato a rendimento su Aave/Morpho fino a nuova richiesta.
-* **Safety Withdrawals**: Ritira la liquidità dai mercati rischiosi in caso di cigni neri.
+### 2. Automatic allocation and rebalancing (`capital_allocator.py` & `treasury.py`)
+* **Profit sweeping**: automatically drains realized profits from the speculative bots (Degen, Perp) into the treasury or into Yield.
+* **Idle cash recycling**: if a bot finds no opportunities (e.g. Degen with zero safe tokens), its idle capital is put to work on Aave/Morpho until it is needed again.
+* **Safety withdrawals**: pulls liquidity out of risky markets during black swan events.
 
-### 3. Gestione del Rischio e Circuit Breaker (`risk_engine.py`)
-* **Delta Netto Globale**: Calcola costantemente l'esposizione reale Long vs Short su Base:
-  $$\text{Delta Netto} = \text{Spot}_{\text{DCA}} + \text{Spot}_{\text{Degen}} + 0.5 \cdot \text{Valore}_{\text{LP}} + \text{Long}_{\text{Perp}} - \text{Short}_{\text{Perp}}$$
-* **Circuit Breaker 24h**: Se il portafoglio aggregato subisce una perdita superiore alla soglia (`MAX_PORTFOLIO_DRAWDOWN_24H_PCT`, default 8%), congela immediatamente tutti i bot speculativi e attiva l'allerta rossa.
+### 3. Risk management and circuit breaker (`risk_engine.py`)
+* **Global net delta**: continuously computes the real long vs short exposure on Base:
+  $$\text{Net Delta} = \text{Spot}_{\text{DCA}} + \text{Spot}_{\text{Degen}} + 0.5 \cdot \text{Value}_{\text{LP}} + \text{Long}_{\text{Perp}} - \text{Short}_{\text{Perp}}$$
+* **24h circuit breaker**: if the aggregated portfolio loses more than the threshold (`MAX_PORTFOLIO_DRAWDOWN_24H_PCT`, default 8%), it immediately freezes all the speculative bots and raises a red alert.
 
-### 4. Gas Balancer Automatico (`gas_balancer.py`)
-* Monitora costantemente le riserve di ETH nativo di tutti i sub-wallets dei bot.
-* Esegue il refuel automatico dal Master Wallet inviando `0.003 ETH` ai bot che scendono sotto `GAS_WARN_ETH`.
+### 4. Automatic gas balancer (`gas_balancer.py`)
+* Continuously monitors the native ETH reserves of all the bots' sub-wallets.
+* Automatically refuels from the master wallet, sending `0.003 ETH` to bots that drop below `GAS_WARN_ETH`.
 
-### 5. Control Plane: Master Dashboard & Telegram Bot
-* **Web Dashboard unificata** (`http://localhost:3000`):
-  * Vista consolidata Net Worth e PnL 24h.
-  * Grid con lo stato in tempo reale, equity, gas e link diretti ai 6 agenti.
-  * Matrice target vs reale con barre di scostamento (drift).
-  * Grafico storico dell'equity curve.
-  * Pulsanti interattivi: *Esegui ciclo ora*, *Emergency Stop*, *Avvia singolo agente*.
-* **Telegram Bot**: Notifiche periodiche di sintesi e allarmi critici.
+### 5. Control plane: master dashboard & Telegram bot
+* **Unified web dashboard** (`http://localhost:3000`):
+  * consolidated net worth and 24h P&L;
+  * grid with the real-time status, equity, gas and direct links to the 6 agents;
+  * target vs actual matrix with drift bars;
+  * historical equity curve;
+  * interactive buttons: *Run cycle now*, *Emergency stop*, *Pause / resume / run a single agent*, *Release funds*.
+* **Every command requires `DASHBOARD_RUN_TOKEN`** (sent as `X-Run-Token` or
+  `Authorization: Bearer`): the coordinator forwards commands to the bots with
+  `AGENT_RUN_TOKEN`, so without this check anyone reaching the dashboard could
+  command the bots. Until the token is set, the commands stay disabled; the
+  browser asks for it once and remembers it.
+* **Telegram bot**: periodic summaries and critical alerts.
 
 ---
 
-## 📁 Struttura del Progetto
+## 📁 Project structure
 
 ```
 intelligent-trading-agent-coordinator/
-├── config.py              # Configurazioni di rete, URL dei 6 bot, parametri di rischio
-├── coordinator.py         # Loop principale dell'orchestratore (orologio dei cicli)
-├── agent_client.py        # Client HTTP per dialogare con /api/status e /api/run dei bot
-├── regime_detector.py     # Classificatore macro: Fear & Greed, trend BTC/ETH, volatilità
-├── capital_allocator.py   # Algoritmo di allocazione (%) e calcolo dei drift
-├── risk_engine.py         # Net Worth, Delta netto direzionale e Circuit Breaker
-├── gas_balancer.py        # Monitoraggio e auto-refuel ETH dei sub-wallets su Base
-├── treasury.py            # Gestione trasferimenti on-chain (USDC/ETH) e Paper Ledger
-├── db_utils.py            # SQLite (coordinator.db) per storico portfolio e snapshot
-├── dashboard.py           # Master Dashboard Web standalone
-├── telegram_bot.py        # Notificatore Telegram consolidato
-├── static/                # CSS, JS e icone condivise con il design system della suite
-├── Dockerfile             # Container multi-ambiente con Python 3.11
-├── docker-compose.yml     # Orchestrazione locale
-├── captain-definition     # Distribuzione rapida su CapRover
-├── requirements.txt       # Dipendenze Python
-└── .env.example           # Template variabili d'ambiente
+├── config.py              # Network settings, URLs of the 6 bots, risk parameters
+├── coordinator.py         # Orchestrator main loop (cycle clock)
+├── agent_client.py        # HTTP client for the bots' /api/status and /api/run
+├── regime_detector.py     # Macro classifier: Fear & Greed, BTC/ETH trend, volatility
+├── capital_allocator.py   # Allocation algorithm (%) and drift computation
+├── risk_engine.py         # Net worth, directional net delta and circuit breaker
+├── gas_balancer.py        # Monitoring and ETH auto-refuel of the sub-wallets on Base
+├── treasury.py            # On-chain transfers (USDC/ETH) and paper ledger
+├── db_utils.py            # SQLite (coordinator.db) for portfolio history and snapshots
+├── dashboard.py           # Standalone master web dashboard
+├── dashboard_auth.py      # Token check for the dashboard commands (same file as in the bots)
+├── telegram_bot.py        # Consolidated Telegram notifier
+├── static/                # CSS, JS and icons shared with the suite's design system
+├── Dockerfile             # Python 3.11 container
+├── docker-compose.yml     # Local orchestration
+├── captain-definition     # Quick deployment on CapRover
+├── requirements.txt       # Python dependencies
+└── .env.example           # Environment variables template
 ```
 
 ---
 
-## 🚀 Installazione e Avvio Rapido
+## 🚀 Installation and quick start
 
-### 1. Installazione Dipendenze
+### 1. Dependencies
 ```bash
-cd d:/intelligent-trading-agent-coordinator
 pip install -r requirements.txt
 ```
 
-### 2. Configurazione Variabili d'Ambiente
+### 2. Environment variables
 ```bash
 cp .env.example .env
 ```
-Compila `.env` impostando gli URL delle dashboard dei tuoi bot (es. porte `3001` - `3006`) e l'indirizzo del tuo Master Wallet.
+Fill in `.env` with the dashboard URLs of your bots (e.g. ports `3001` -
+`3006`), your master wallet address, `DASHBOARD_RUN_TOKEN` and, if your bots'
+dashboards sit behind HTTP basic auth, `AGENT_HTTP_USER` / `AGENT_HTTP_PASS`
+(there are no defaults in the code). `DRY_RUN` and `PAPER_TRADING` are on by
+default.
 
-### 3. Test Rapido di un Singolo Ciclo
+### 3. Quick test of a single cycle
 ```bash
 python coordinator.py --once
 ```
 
-### 4. Avvio della Dashboard e del Demone
+### 4. Start the dashboard and the daemon
 ```bash
 python dashboard.py
 ```
-Accedi da browser a: **`http://localhost:3000`**
+Open **`http://localhost:3000`** in your browser.
 
 ---
 
-## 🚢 Distribuzione su CapRover & Docker
+## 🚢 Deploying on CapRover & Docker
 
-Il progetto include il file `captain-definition` e il `Dockerfile` per il deploy one-click su CapRover:
-1. Crea una nuova app `ita-coordinator` sulla tua dashboard CapRover.
-2. Configura le variabili d'ambiente (copiando da `.env.example`).
-3. Imposta un volume persistente su `/app/data` (label `coordinator-data`).
-4. Fai il deploy via Git o CapRover CLI (`caprover deploy`).
+The project includes a `captain-definition` file and a `Dockerfile` for
+one-click deployment on CapRover:
+1. Create a new app, e.g. `ita-coordinator`, in your CapRover dashboard.
+2. Set the environment variables (copy them from `.env.example`).
+3. Set a persistent volume on `/app/data` (label `coordinator-data`).
+4. Deploy via Git or the CapRover CLI (`caprover deploy`).
+
+---
+
+## ⚠️ Disclaimer
+
+This software is experimental and provided "as is", without warranty of any
+kind (see the MIT license). It is not financial advice nor an invitation to
+invest.
+
+- **You can lose money.** Bugs, wrong model decisions, slippage, protocol
+  exploits, manipulated oracles and liquidations can cause the loss of some or
+  all of your capital.
+- **Decisions are made by an LLM.** It can be wrong or behave unpredictably:
+  the executor's limits reduce the damage, they do not eliminate it. Past
+  results, paper ones included, do not guarantee future ones.
+- **Start with paper or dry-run.** When live, use a wallet dedicated to the
+  bot, with amounts you can afford to lose, and never reuse that private key
+  elsewhere.
+- **Protect your keys.** The private key belongs only in the deployment's
+  environment variables: never commit it. Without `DASHBOARD_RUN_TOKEN` the
+  dashboard commands stay disabled: set it to a long random value before
+  exposing the dashboard to the Internet.
+- **Laws and taxes.** You are responsible for complying with the rules and tax
+  obligations of your country.
+- **The coordinator moves money.** Profit sweeping, capital reallocation,
+  release-funds commands and the gas balancer sign transfers from the master
+  wallet and trigger swaps and withdrawals in the bots. A wrong regime or a
+  misconfigured bot URL can move capital where you did not expect it: start in
+  paper mode and give the master wallet only what the suite needs.
+
+## 📜 License
+
+MIT.
