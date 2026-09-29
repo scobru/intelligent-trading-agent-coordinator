@@ -143,8 +143,14 @@ def test_zero_target_bot_with_position_sweeps_liquid_usdc():
 
     sweeps = [a for a in plan["actions"] if a["action"] == "SWEEP_IDLE_FUNDS" and a["from_agent"] == "yield"]
     assert len(sweeps) == 1
-    assert sweeps[0]["amount_usd"] == 33.72
+    assert sweeps[0]["amount_usd"] == 39.14  # intero valore: il Treasury svincola la parte in posizione
     assert sweeps[0]["to_agent"] in ("perp", "degen", "dca")
+
+    # Con la liquidazione disattivata si spostano solo i liquidi
+    with patch.object(allocator, "liquidate_zero_target", False):
+        plan = allocator.compute_allocation_plan(regime="BULL_MOMENTUM", agents_status=agents_status, treasury_cash_usd=0.0)
+    sweeps = [a for a in plan["actions"] if a["action"] == "SWEEP_IDLE_FUNDS" and a["from_agent"] == "yield"]
+    assert sweeps[0]["amount_usd"] == 33.72
 
 
 def test_tiny_portfolio_all_parks_in_dca():
