@@ -21,8 +21,8 @@ class AgentClient:
     def __init__(self):
         self.agents_config = config.AGENTS
         self.run_token = config.AGENT_RUN_TOKEN
-        self.http_user = getattr(config, "AGENT_HTTP_USER", "scobru")
-        self.http_pass = getattr(config, "AGENT_HTTP_PASS", self.run_token or "francos88")
+        self.http_user = getattr(config, "AGENT_HTTP_USER", "")
+        self.http_pass = getattr(config, "AGENT_HTTP_PASS", "")
         self.auth = (self.http_user, self.http_pass) if (self.http_user and self.http_pass) else None
 
     def get_agent_status(self, agent_id: str) -> Dict[str, Any]:
@@ -61,8 +61,8 @@ class AgentClient:
                 res_data["status"] = "online"
                 self._extract_metrics(res_data, raw, agent_id)
                 return res_data
-            elif resp.status_code == 401 and not self.auth and self.run_token:
-                resp = requests.get(url, auth=("scobru", self.run_token), timeout=TIMEOUT_SECONDS)
+            elif resp.status_code == 401 and not self.auth and self.run_token and self.http_user:
+                resp = requests.get(url, auth=(self.http_user, self.run_token), timeout=TIMEOUT_SECONDS)
                 if resp.status_code == 200:
                     raw = resp.json()
                     res_data["online"] = True

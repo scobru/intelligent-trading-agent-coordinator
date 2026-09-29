@@ -4,7 +4,6 @@ Fornisce una vista consolidata in tempo reale su Net Worth, Regime di mercato,
 Delta netto, stato dei 6 agenti, ribilanciamento dei capitali e storico operazioni.
 """
 
-import hmac
 import json
 import logging
 import os
@@ -26,6 +25,7 @@ if hasattr(sys.stderr, "reconfigure"):
         pass
 
 import config
+import dashboard_auth
 import db_utils
 from coordinator import Coordinator
 
@@ -668,18 +668,37 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    // Token dei comandi: chiesto una volta, ricordato nel browser
+    function runToken(reset) {
+      let t = '';
+      try { if (reset) localStorage.removeItem('ita_run_token'); t = localStorage.getItem('ita_run_token') || ''; } catch (e) {}
+      if (!t) {
+        t = (prompt('Token di autorizzazione (DASHBOARD_RUN_TOKEN):') || '').trim();
+        try { if (t) localStorage.setItem('ita_run_token', t); } catch (e) {}
+      }
+      return t;
+    }
+
+    async function postCmd(url, body) {
+      const opts = {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-Run-Token': runToken(false)},
+        body: body === undefined ? undefined : JSON.stringify(body)
+      };
+      let res = await fetch(url, opts);
+      if (res.status === 403) {
+        opts.headers['X-Run-Token'] = runToken(true);
+        res = await fetch(url, opts);
+      }
+      return res;
+    }
+
     async function triggerCycle() {
       const btn = document.getElementById('btn-run');
       btn.disabled = true;
       btn.textContent = '⏳ Invio richiesta...';
       try {
-        const res = await fetch('/api/run', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'DashboardUI'
-          }
-        });
+        const res = await postCmd('/api/run');
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
           alert('Attenzione: ' + (data.message || data.error || ('HTTP ' + res.status)));
@@ -708,7 +727,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function emergencyPanic() {
       if (!confirm('ATTENZIONE: Attivare il blocco di emergenza globale? Tutti i 6 bot verranno messi in PAUSA.')) return;
       try {
-        await fetch('/api/emergency_stop', { method: 'POST' });
+        const res = await postCmd('/api/emergency_stop');
+        if (!res.ok) { alert('Operazione rifiutata (HTTP ' + res.status + ')'); return; }
         alert('Blocco di emergenza attivato su tutti i bot!');
         setTimeout(refresh, 1000);
       } catch(e) {
@@ -719,7 +739,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function emergencyResume() {
       if (!confirm('Riattivare tutti i bot subordinati?')) return;
       try {
-        await fetch('/api/emergency_resume', { method: 'POST' });
+        const res = await postCmd('/api/emergency_resume');
+        if (!res.ok) { alert('Operazione rifiutata (HTTP ' + res.status + ')'); return; }
         alert('Ripresa globale inviata con successo!');
         setTimeout(refresh, 1000);
       } catch(e) {
@@ -730,11 +751,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function toggleAgentPause(aid, shouldPause) {
       const endpoint = shouldPause ? '/api/agent_pause/' + aid : '/api/agent_resume/' + aid;
       try {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ reason: 'Richiesta manuale da Master Dashboard' })
-        }).then(r => r.json());
+        const res = await postCmd(endpoint, { reason: 'Richiesta manuale da Master Dashboard' }).then(r => r.json());
         if (res.status === 'success') {
           setTimeout(refresh, 1000);
         } else {
@@ -747,7 +764,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
     async function triggerAgentRun(aid) {
       try {
-        const res = await fetch('/api/agent_run/' + aid, { method: 'POST' });
+        const res = await postCmd('/api/agent_run/' + aid);
         const data = await res.json().catch(() => ({}));
         if (res.ok && (data.status === 'success' || data.success || !data.error)) {
           alert('Segnale di avvio ciclo inviato con successo a ' + aid);
@@ -763,11 +780,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     async function releaseAgentFunds(aid) {
       if (!confirm(`Vuoi richiedere a ${aid.toUpperCase()} di svincolare capitale (vendere token o ritirare da Gate) per liberare USDC?`)) return;
       try {
-        const res = await fetch('/api/agent_release_funds/' + aid, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ amount_usd: 0 })
-        }).then(r => r.json());
+        const res = await postCmd('/api/agent_release_funds/' + aid, { amount_usd: 0 }).then(r => r.json());
         if (res.status === 'success') {
           const detail = res.data?.message || (res.data ? JSON.stringify(res.data) : 'Fondi svincolati con successo.');
           alert(`Svincolo riuscito per ${aid.toUpperCase()}:\n${detail}`);
@@ -934,13 +947,16 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        # Ogni comando agisce sui bot (cicli, pause, svincolo fondi) e il
+        # coordinator li inoltra con AGENT_RUN_TOKEN: senza questo controllo
+        # chiunque raggiunga la dashboard li comanderebbe al posto nostro.
+        # Senza DASHBOARD_RUN_TOKEN configurato i comandi restano disattivati.
+        if not dashboard_auth.is_run_token_valid(self.headers, getattr(config, "DASHBOARD_RUN_TOKEN", "")):
+            self._json(403, {"error": "unauthorized",
+                             "message": "Token non valido o DASHBOARD_RUN_TOKEN non configurato."})
+            return
+
         if path == "/api/run":
-            token = getattr(config, "DASHBOARD_RUN_TOKEN", "")
-            auth = self.headers.get("Authorization", "").replace("Bearer ", "").strip()
-            is_browser_ui = self.headers.get("X-Requested-With") == "DashboardUI" or self.headers.get("Sec-Fetch-Site") in ("same-origin", "same-site")
-            if token and not is_browser_ui and not (auth and hmac.compare_digest(auth, token)):
-                self._json(403, {"error": "unauthorized", "message": "Autenticazione richiesta per /api/run"})
-                return
 
             if _run_lock.locked():
                 self._json(409, {"status": "already_running", "message": "Un ciclo è già in corso di esecuzione."})
