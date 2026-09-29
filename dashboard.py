@@ -260,7 +260,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); flex-wrap: wrap; gap: 8px;">
       <span>⚡ <strong>Ribilanciamento Dinamico:</strong> Spostamento automatico fino a ±10% di peso verso la strategia con migliore rendimento.</span>
-      <span id="ai-gas-note">⛽ <strong>Auto-Refuel Gas:</strong> Trasferisce ETH solo se la Tesoreria Master ha saldo disponibile (&ge; 0.0038 ETH).</span>
+      <span id="ai-gas-note">⛽ <strong>Auto-Refuel Gas:</strong> Trasferisce ETH solo se la Tesoreria Master ha saldo disponibile (&ge; 0.0015 ETH, buffer di 0.0005 incluso) a un bot sotto 0.0015 ETH.</span>
     </div>
   </div>
 
