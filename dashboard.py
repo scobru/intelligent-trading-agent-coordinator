@@ -484,7 +484,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const pnlUsdSign = pnlUsd >= 0 ? '+' : '';
         const initialEq = a.initial_equity_usd ? ITA.usd(a.initial_equity_usd) : '--';
         const snapsCount = a.snapshots_count || 0;
-        const pnlTooltip = hasPnl ? `Da ${initialEq} iniziale (${snapsCount} snapshot)` : 'In attesa del primo ciclo...';
+        const pnlTooltip = hasPnl ? `Da ${initialEq} iniziale (${snapsCount} snapshot), al netto dei trasferimenti` : 'In attesa del primo finanziamento...';
 
         return `
           <div class="agent-card">
@@ -890,7 +890,7 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
                         for aid, pnl_data in agents_pnl.items():
                             if aid in agents:
                                 agents[aid]["pnl_usd"] = pnl_data.get("pnl_usd", 0.0)
-                                agents[aid]["pnl_pct"] = pnl_data.get("pnl_pct", 0.0)
+                                agents[aid]["pnl_pct"] = pnl_data.get("pnl_pct")
                                 agents[aid]["initial_equity_usd"] = pnl_data.get("initial_equity_usd", 0.0)
                                 agents[aid]["snapshots_count"] = pnl_data.get("snapshots_count", 0)
                 except Exception:

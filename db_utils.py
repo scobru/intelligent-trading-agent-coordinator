@@ -221,41 +221,62 @@ def get_recent_errors(limit: int = 20) -> List[Dict[str, Any]]:
     return rows
 
 def get_agents_historical_pnl() -> Dict[str, Dict[str, Any]]:
-    """Calcola PnL e variazione percentuale dell'equity per ciascun agente rispetto al passato."""
+    """Calcola PnL e variazione percentuale dell'equity per ciascun agente.
+
+    La baseline è il primo snapshot con equity > 0 (prima del finanziamento l'equity è 0
+    e la percentuale non sarebbe calcolabile). I trasferimenti USDC eseguiti dopo la
+    baseline (depositi/prelievi del coordinator) vengono sottratti, così il PnL riflette
+    solo il rendimento reale. Se non esiste una baseline valida, pnl_pct è None (N/A).
+    """
     conn = get_connection()
     cur = conn.cursor()
-    performance = {}
+    performance: Dict[str, Dict[str, Any]] = {}
     try:
-        cur.execute("""
-            SELECT agent_id,
-                   MIN(id) as first_id,
-                   MAX(id) as last_id
-            FROM agent_snapshots
-            GROUP BY agent_id;
-        """)
-        rows = cur.fetchall()
-        for r in rows:
-            aid = r["agent_id"]
-            first_id = r["first_id"]
-            last_id = r["last_id"]
-
-            cur.execute("SELECT equity_usd, created_at FROM agent_snapshots WHERE id = ?", (first_id,))
+        cur.execute("SELECT DISTINCT agent_id FROM agent_snapshots;")
+        agent_ids = [r["agent_id"] for r in cur.fetchall()]
+        for aid in agent_ids:
+            cur.execute(
+                "SELECT id, created_at, equity_usd FROM agent_snapshots "
+                "WHERE agent_id = ? AND equity_usd > 0 ORDER BY id ASC LIMIT 1;", (aid,))
             first_row = cur.fetchone()
-            cur.execute("SELECT equity_usd, created_at FROM agent_snapshots WHERE id = ?", (last_id,))
+            cur.execute(
+                "SELECT id, equity_usd FROM agent_snapshots WHERE agent_id = ? ORDER BY id DESC LIMIT 1;",
+                (aid,))
             last_row = cur.fetchone()
 
-            if first_row and last_row:
-                initial_eq = float(first_row["equity_usd"] or 0.0)
-                current_eq = float(last_row["equity_usd"] or 0.0)
-                diff_usd = current_eq - initial_eq
-                diff_pct = (diff_usd / initial_eq * 100.0) if initial_eq > 0.0 else 0.0
+            if not first_row or not last_row:
                 performance[aid] = {
-                    "initial_equity_usd": round(initial_eq, 2),
-                    "current_equity_usd": round(current_eq, 2),
-                    "pnl_usd": round(diff_usd, 2),
-                    "pnl_pct": round(diff_pct, 2),
-                    "snapshots_count": (last_id - first_id + 1)
+                    "initial_equity_usd": 0.0,
+                    "current_equity_usd": round(float(last_row["equity_usd"] or 0.0), 2) if last_row else 0.0,
+                    "net_flows_usd": 0.0,
+                    "pnl_usd": 0.0,
+                    "pnl_pct": None,
+                    "snapshots_count": 0,
                 }
+                continue
+
+            initial_eq = float(first_row["equity_usd"])
+            current_eq = float(last_row["equity_usd"] or 0.0)
+
+            cur.execute(
+                "SELECT COALESCE(SUM(CASE WHEN to_agent = ? THEN amount ELSE 0 END), 0) "
+                "     - COALESCE(SUM(CASE WHEN from_agent = ? THEN amount ELSE 0 END), 0) AS net "
+                "FROM rebalance_operations "
+                "WHERE asset = 'USDC' AND status IN ('SUCCESS', 'SIMULATED') AND created_at > ?;",
+                (aid, aid, first_row["created_at"]))
+            net_flows = float(cur.fetchone()["net"] or 0.0)
+
+            diff_usd = current_eq - initial_eq - net_flows
+            invested = initial_eq + max(net_flows, 0.0)
+            diff_pct = (diff_usd / invested * 100.0) if invested > 0.0 else None
+            performance[aid] = {
+                "initial_equity_usd": round(initial_eq, 2),
+                "current_equity_usd": round(current_eq, 2),
+                "net_flows_usd": round(net_flows, 2),
+                "pnl_usd": round(diff_usd, 2),
+                "pnl_pct": round(diff_pct, 2) if diff_pct is not None else None,
+                "snapshots_count": last_row["id"] - first_row["id"] + 1,
+            }
     except Exception as exc:
         logger.debug("Errore calcolo PnL storico agenti: %s", exc)
     finally:
