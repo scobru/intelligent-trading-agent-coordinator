@@ -194,6 +194,49 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       font-size: 11px;
       font-weight: 700;
     }
+    /* PnL Badge per Agent Card */
+    .pnl-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .pnl-badge.profit {
+      background: linear-gradient(135deg, rgba(34, 197, 94, 0.18) 0%, rgba(16, 185, 129, 0.10) 100%);
+      color: #22c55e;
+      border: 1px solid rgba(34, 197, 94, 0.35);
+    }
+    .pnl-badge.loss {
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.18) 0%, rgba(220, 38, 38, 0.10) 100%);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.35);
+    }
+    .pnl-badge.neutral {
+      background: rgba(148, 163, 184, 0.12);
+      color: var(--muted);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    .pnl-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0,0,0,0.15);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    .pnl-detail {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    @keyframes pnlPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.85; }
+    }
+    .pnl-badge.profit { animation: pnlPulse 3s ease-in-out infinite; }
   </style>
 </head>
 <body>
@@ -405,7 +448,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       // Render 6 Agents Cards
       renderAgents(s.agents || {}, s.allocation_plan?.allocations || {}, ai, s.regime_data?.eth_price || 2690);
 
-      // Render Allocation Table
       renderAllocTable(s.allocation_plan?.allocations || {}, ai);
     }
 
@@ -432,6 +474,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         const opEquity = (a.equity_usd || 0);
         const totalVal = (a.total_val_usd !== undefined) ? a.total_val_usd : (opEquity + gasUsd);
 
+        // PnL storico del bot
+        const hasPnl = (a.pnl_pct !== undefined && a.pnl_pct !== null);
+        const pnlPct = hasPnl ? Number(a.pnl_pct) : 0;
+        const pnlUsd = hasPnl ? Number(a.pnl_usd || 0) : 0;
+        const pnlClass = !hasPnl ? 'neutral' : (pnlPct >= 0 ? 'profit' : 'loss');
+        const pnlSign = pnlPct >= 0 ? '+' : '';
+        const pnlIcon = !hasPnl ? '📊' : (pnlPct > 0 ? '📈' : (pnlPct < 0 ? '📉' : '➖'));
+        const pnlUsdSign = pnlUsd >= 0 ? '+' : '';
+        const initialEq = a.initial_equity_usd ? ITA.usd(a.initial_equity_usd) : '--';
+        const snapsCount = a.snapshots_count || 0;
+        const pnlTooltip = hasPnl ? `Da ${initialEq} iniziale (${snapsCount} snapshot)` : 'In attesa del primo ciclo...';
+
         return `
           <div class="agent-card">
             <div class="agent-header">
@@ -446,6 +500,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               </div>
             </div>
             <div style="font-size: 12px; color: var(--muted);">${a.description || ''}</div>
+            <div class="pnl-row" title="${pnlTooltip}">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px;">Performance</span>
+                <span class="pnl-badge ${pnlClass}">
+                  ${pnlIcon} ${hasPnl ? pnlSign + pnlPct.toFixed(2) + '%' : 'N/A'}
+                </span>
+              </div>
+              <div style="text-align: right;">
+                <span style="font-size: 12px; font-weight: 600; color: ${pnlUsd >= 0 ? 'var(--success)' : 'var(--danger)'}">
+                  ${hasPnl ? pnlUsdSign + ITA.usd(Math.abs(pnlUsd)) : '--'}
+                </span>
+              </div>
+            </div>
             <div style="display: flex; justify-content: space-between; align-items: baseline;">
               <div>
                 <div style="font-size: 11px; color: var(--muted);">VALORE TOTALE (FONDI + ETH)</div>
@@ -458,7 +525,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
               </div>
             </div>
             <div class="prog-bar">
-              <div class="prog-fill" style="width: ${Math.min(100, actualPct)}%; background: ${a.color || 'var(--primary)'};"></div>
+              <div class="prog-fill" style="width: ${Math.min(100, actualPct)}%; background: ${a.color || 'var(--primary)'};">${''}</div>
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 12px; border-top: 1px solid var(--border); padding-top: 8px;">
               <span>Posizioni: <strong>${a.positions_count || 0}</strong></span>
@@ -811,6 +878,23 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
                         )
                     except Exception:
                         pass
+            # Arricchisci agenti con PnL storico se non già presente
+            if _latest_status_cache and _latest_status_cache.get("agents"):
+                try:
+                    agents = _latest_status_cache["agents"]
+                    needs_pnl = any(
+                        "pnl_pct" not in a for a in agents.values()
+                    )
+                    if needs_pnl:
+                        agents_pnl = db_utils.get_agents_historical_pnl()
+                        for aid, pnl_data in agents_pnl.items():
+                            if aid in agents:
+                                agents[aid]["pnl_usd"] = pnl_data.get("pnl_usd", 0.0)
+                                agents[aid]["pnl_pct"] = pnl_data.get("pnl_pct", 0.0)
+                                agents[aid]["initial_equity_usd"] = pnl_data.get("initial_equity_usd", 0.0)
+                                agents[aid]["snapshots_count"] = pnl_data.get("snapshots_count", 0)
+                except Exception:
+                    pass
             self._json(200, _latest_status_cache or {})
             return
 
