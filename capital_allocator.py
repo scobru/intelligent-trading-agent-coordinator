@@ -26,6 +26,7 @@ class CapitalAllocator:
         })
         self.enable_pruning = getattr(config, "ENABLE_CAPITAL_PRUNING", True)
         self.enable_idle_sweep = getattr(config, "ENABLE_IDLE_CAPITAL_SWEEP", True)
+        self.liquidate_zero_target = getattr(config, "ENABLE_ZERO_TARGET_LIQUIDATION", True)
 
     def adjust_weights_for_viability(
         self,
@@ -230,24 +231,34 @@ class CapitalAllocator:
             # Bot a target 0% con posizioni aperte (es. Yield con un deposito lending): le posizioni restano,
             # ma la liquidita' USDC libera va comunque spostata verso i bot sottopesati.
             liquid_usdc = float(st.get("balance_usd", 0.0) or 0.0)
-            is_zero_target_liquid = (tgt_usd == 0.0 and pos_cnt > 0 and liquid_usdc >= min_sweep_idle)
+            # Con ENABLE_ZERO_TARGET_LIQUIDATION si chiede al bot anche di chiudere le posizioni (release_funds):
+            # l'importo e' l'intero valore del bot, il Treasury svincola la parte non liquida prima del transfer.
+            sweep_base = surplus if self.liquidate_zero_target else liquid_usdc
+            is_zero_target_liquid = (tgt_usd == 0.0 and pos_cnt > 0 and sweep_base >= min_sweep_idle)
 
             if is_zero_target_liquid and not (is_zero_target_idle or is_idle_sub_threshold):
                 target_dest = "degen" if weights.get("degen", 0.0) > 0 else ("dca" if weights.get("dca", 0.0) > 0 else "yield")
                 valid_under = [u for u in underweight if allocations.get(u[0], {}).get("target_usd", 0.0) > 0]
                 if valid_under:
                     target_dest = sorted(valid_under, key=lambda x: x[1], reverse=True)[0][0]
-                amount_to_sweep = min(surplus, liquid_usdc)
+                amount_to_sweep = min(surplus, sweep_base)
+                if self.liquidate_zero_target:
+                    reason = (
+                        f"Liquidazione {agent_id.upper()} (target $0): chiusura {pos_cnt} posizioni e recupero "
+                        f"${amount_to_sweep:.2f} (di cui ${liquid_usdc:.2f} liquidi). Spostamento a {target_dest.upper()}."
+                    )
+                else:
+                    reason = (
+                        f"Recupero USDC liquidi da {agent_id.upper()} (target $0, {pos_cnt} posizioni aperte mantenute): "
+                        f"${liquid_usdc:.2f} liberi. Spostamento a {target_dest.upper()}."
+                    )
                 actions.append({
                     "action": "SWEEP_IDLE_FUNDS",
                     "from_agent": agent_id,
                     "to_agent": target_dest,
                     "amount_usd": round(amount_to_sweep, 2),
                     "asset": "USDC",
-                    "reason": (
-                        f"Recupero USDC liquidi da {agent_id.upper()} (target $0, {pos_cnt} posizioni aperte mantenute): "
-                        f"${liquid_usdc:.2f} liberi. Spostamento a {target_dest.upper()}."
-                    )
+                    "reason": reason
                 })
                 handled_overweight.add(agent_id)
             elif is_zero_target_idle or is_idle_sub_threshold:

@@ -218,6 +218,8 @@ AGENT_MIN_VIABLE_CAPITAL = {
 
 ENABLE_CAPITAL_PRUNING = _b("ENABLE_CAPITAL_PRUNING", True)
 ENABLE_IDLE_CAPITAL_SWEEP = _b("ENABLE_IDLE_CAPITAL_SWEEP", True)
+# Se True, i bot a target 0% con posizioni aperte vengono liquidati (POST /api/release_funds) e i fondi ridistribuiti
+ENABLE_ZERO_TARGET_LIQUIDATION = _b("ENABLE_ZERO_TARGET_LIQUIDATION", True)
 
 # --- Gas Balancer (ETH su Base) ---
 AUTO_REFUEL_GAS = _b("AUTO_REFUEL_GAS", True)
