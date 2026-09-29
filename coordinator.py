@@ -138,6 +138,18 @@ class Coordinator:
             brief = ai_report.get("reasoning").split("\n")[0][:120]
             logger.info("   -> AI Briefing: %s", brief)
 
+        # 6b. Arricchimento agenti con PnL storico (percentuale di guadagno)
+        try:
+            agents_pnl = db_utils.get_agents_historical_pnl()
+            for agent_id, pnl_data in agents_pnl.items():
+                if agent_id in agents_status:
+                    agents_status[agent_id]["pnl_usd"] = pnl_data.get("pnl_usd", 0.0)
+                    agents_status[agent_id]["pnl_pct"] = pnl_data.get("pnl_pct")
+                    agents_status[agent_id]["initial_equity_usd"] = pnl_data.get("initial_equity_usd", 0.0)
+                    agents_status[agent_id]["snapshots_count"] = pnl_data.get("snapshots_count", 0)
+        except Exception as exc:
+            logger.debug("PnL storico agenti non disponibile: %s", exc)
+
         # 7. Calcolo Allocazione Capitale e Piani di Ribilanciamento
         logger.info("7/8 Calcolo allocazione capitale per regime %s...", regime)
         alloc_plan = self.capital_allocator.compute_allocation_plan(
