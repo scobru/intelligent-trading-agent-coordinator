@@ -115,6 +115,14 @@ class Treasury:
             "total_usd": total_usd
         }
 
+    def _broadcast(self, raw_tx, timeout: int = 120) -> str:
+        """Invia la tx e attende la receipt: solleva errore se non confermata o andata in revert."""
+        tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=timeout)
+        if receipt.status != 1:
+            raise RuntimeError(f"Transazione {tx_hash.hex()} fallita on-chain (revert).")
+        return tx_hash.hex()
+
     def transfer_eth(self, to_address: str, amount_eth: float) -> Optional[str]:
         """Invia ETH nativo su Base (utilizzato dal Gas Balancer)."""
         if config.PAPER_TRADING or config.DRY_RUN:
@@ -142,8 +150,7 @@ class Treasury:
 
         signed = self.w3.eth.account.sign_transaction(tx, self.private_key)
         raw_tx = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
-        tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
-        h_str = tx_hash.hex()
+        h_str = self._broadcast(raw_tx)
         logger.info("Trasferimento ETH completato: %s (tx: %s)", to_address, h_str)
         return h_str
 
@@ -174,8 +181,7 @@ class Treasury:
 
         signed = self.w3.eth.account.sign_transaction(tx, from_private_key)
         raw_tx = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
-        tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
-        h_str = tx_hash.hex()
+        h_str = self._broadcast(raw_tx)
         logger.info("Trasferimento gas tra bot completato: %s -> %s (tx: %s)", account.address, to_address, h_str)
         return h_str
 
@@ -228,8 +234,7 @@ class Treasury:
 
         signed = self.w3.eth.account.sign_transaction(tx, priv_key)
         raw_tx = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
-        tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
-        h_str = tx_hash.hex()
+        h_str = self._broadcast(raw_tx)
         logger.info("Trasferimento USDC completato da %s verso %s: %s", account.address, to_address, h_str)
         return h_str
 
@@ -342,9 +347,13 @@ class Treasury:
                                 sender_name, avail_usdc, amount, needed)
                     release_res = client.release_agent_funds(from_id, needed)
                     logger.info("   -> Risultato svincolo fondi da %s: %s", from_id, release_res)
-                    time.sleep(3)  # Attesa conferma transazione e sincronizzazione on-chain
-                    raw_usdc = self.usdc_contract.functions.balanceOf(account.address).call()
-                    avail_usdc = float(raw_usdc) / 1e6
+                    # Il release e' asincrono lato agente: polling del saldo fino all'arrivo dei fondi
+                    for _ in range(10):
+                        time.sleep(3)
+                        raw_usdc = self.usdc_contract.functions.balanceOf(account.address).call()
+                        avail_usdc = float(raw_usdc) / 1e6
+                        if avail_usdc >= amount - 0.05:
+                            break
 
             if avail_usdc < min_reb:
                 warn_msg = (

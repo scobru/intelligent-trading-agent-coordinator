@@ -155,7 +155,7 @@ class Coordinator:
         alloc_plan = self.capital_allocator.compute_allocation_plan(
             regime=regime,
             agents_status=agents_status,
-            treasury_cash_usd=treasury_total_usd,
+            treasury_cash_usd=treasury_usdc,
             dynamic_weights=ai_report.get("dynamic_weights")
         )
 

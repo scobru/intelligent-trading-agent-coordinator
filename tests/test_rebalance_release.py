@@ -61,3 +61,13 @@ def test_treasury_calls_release_funds_when_usdc_insufficient():
         assert ok is True
         mock_agent_client.release_agent_funds.assert_called_once_with("degen", 28.1)
         treasury.transfer_usdc.assert_called_once()
+
+
+def test_broadcast_raises_on_reverted_tx():
+    treasury = Treasury()
+    treasury.w3 = MagicMock()
+    treasury.w3.eth.wait_for_transaction_receipt.return_value.status = 0
+    with pytest.raises(RuntimeError):
+        treasury._broadcast(b"raw")
+    treasury.w3.eth.wait_for_transaction_receipt.return_value.status = 1
+    assert treasury._broadcast(b"raw") == treasury.w3.eth.send_raw_transaction.return_value.hex.return_value

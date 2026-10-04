@@ -129,11 +129,13 @@ class CapitalAllocator:
         """Calcola l'allocazione target, gli scostamenti correnti e le azioni di ribilanciamento."""
         raw_weights = dynamic_weights or self.target_matrices.get(regime, self.target_matrices["BALANCED"])
 
-        # Calcolo del Net Worth consolidato (somma fondi totali dei 6 bot inclusi ETH fee + cassa totale master treasury)
+        # Net Worth allocabile: solo USDC/equity operativa dei bot + cassa USDC del master.
+        # Il gas ETH e' escluso: i transfer muovono solo USDC, includerlo gonfia il drift
+        # e genera rebalance che non possono mai chiudersi.
         agents_equity = {}
         total_agents_equity = 0.0
         for agent_id, st in agents_status.items():
-            tot_agent = float(st.get("total_val_usd", 0.0) or (float(st.get("equity_usd", 0.0) or st.get("balance_usd", 0.0) or 0.0) + float(st.get("gas_usd", 0.0) or 0.0)))
+            tot_agent = float(st.get("equity_usd", 0.0) or st.get("balance_usd", 0.0) or 0.0)
             agents_equity[agent_id] = tot_agent
             total_agents_equity += tot_agent
 

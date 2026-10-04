@@ -171,3 +171,12 @@ def test_tiny_portfolio_all_parks_in_dca():
     # Should park 100% in dca (lowest viable barrier)
     assert plan["allocations"]["dca"]["target_pct"] == 1.0
     assert plan["allocations"]["dca"]["target_usd"] == 4.0
+
+
+def test_gas_eth_excluded_from_allocatable_net_worth():
+    allocator = CapitalAllocator()
+    agents_status = {
+        "yield": {"equity_usd": 1000.0, "gas_usd": 500.0, "total_val_usd": 1500.0, "positions_count": 0},
+    }
+    plan = allocator.compute_allocation_plan(regime="BALANCED", agents_status=agents_status)
+    assert plan["total_net_worth_usd"] == 1000.0
