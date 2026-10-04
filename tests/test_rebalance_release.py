@@ -71,3 +71,13 @@ def test_broadcast_raises_on_reverted_tx():
         treasury._broadcast(b"raw")
     treasury.w3.eth.wait_for_transaction_receipt.return_value.status = 1
     assert treasury._broadcast(b"raw") == treasury.w3.eth.send_raw_transaction.return_value.hex.return_value
+
+
+def test_fee_too_high_check():
+    treasury = Treasury()
+    treasury.w3 = MagicMock()
+    treasury.w3.eth.gas_price = 10**9  # 1 gwei -> 65k gas = 6.5e13 wei
+    assert treasury.fee_too_high(100.0) is False  # eth_price 0: disattivato
+    treasury.eth_price = 3000.0  # fee ~ $0.195
+    assert treasury.fee_too_high(5.0) is True     # > 2% di $5
+    assert treasury.fee_too_high(100.0) is False
