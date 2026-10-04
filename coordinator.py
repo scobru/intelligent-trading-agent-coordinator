@@ -88,6 +88,7 @@ class Coordinator:
         treasury_usdc = treasury_bals.get("usdc", 0.0)
         treasury_eth = treasury_bals.get("eth", 0.0)
         treasury_eth_usd = treasury_bals.get("eth_usd", 0.0)
+        self.treasury.eth_price = eth_price
         treasury_total_usd = treasury_bals.get("total_usd", treasury_usdc + treasury_eth_usd)
         logger.info("   -> Master Treasury: $%.2f USDC + %.4f ETH ($%.2f) = Valore Totale $%.2f",
                     treasury_usdc, treasury_eth, treasury_eth_usd, treasury_total_usd)

@@ -40,6 +40,7 @@ class Treasury:
         else:
             self.usdc_contract = None
 
+        self.eth_price = 0.0  # aggiornato dal Coordinator a ogni ciclo; 0 = controllo fee disattivato
         self.paper_file = Path(config.PAPER_ACCOUNT_FILE)
         self._init_paper_state()
 
@@ -122,6 +123,16 @@ class Treasury:
         if receipt.status != 1:
             raise RuntimeError(f"Transazione {tx_hash.hex()} fallita on-chain (revert).")
         return tx_hash.hex()
+
+    def fee_too_high(self, amount_usd: float, gas_units: int = 65_000) -> bool:
+        """True se il gas stimato di un transfer USDC supera MAX_REBALANCE_FEE_PCT dell'importo."""
+        if self.eth_price <= 0 or amount_usd <= 0:
+            return False
+        try:
+            fee_usd = gas_units * self.w3.eth.gas_price / 1e18 * self.eth_price
+        except Exception:
+            return False
+        return fee_usd > amount_usd * config.MAX_REBALANCE_FEE_PCT / 100.0
 
     def transfer_eth(self, to_address: str, amount_eth: float) -> Optional[str]:
         """Invia ETH nativo su Base (utilizzato dal Gas Balancer)."""
@@ -374,6 +385,14 @@ class Treasury:
                 return False
 
             actual_amount = min(amount, avail_usdc)
+            if self.fee_too_high(actual_amount):
+                msg = f"Fee di rete stimate > {config.MAX_REBALANCE_FEE_PCT}% dell'importo (${actual_amount:.2f}): transfer rinviato."
+                logger.info("⛽ %s", msg)
+                db_utils.log_operation(
+                    op_type=action.get("action", "REBALANCE_SKIPPED"), amount=actual_amount, asset="USDC",
+                    from_agent=from_id, to_agent=to_id, tx_hash="N/A_FEE_TOO_HIGH", status="SKIPPED", reason=msg
+                )
+                return False
             tx_h = self.transfer_usdc(to_wallet, actual_amount, sender_private_key=sender_pk)
             db_utils.log_operation(
                 op_type=action.get("action", "TRANSFER_USDC"),

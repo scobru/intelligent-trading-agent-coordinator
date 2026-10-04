@@ -201,6 +201,7 @@ MAX_PERFORMANCE_WEIGHT_SHIFT = _f("MAX_PERFORMANCE_WEIGHT_SHIFT", 0.10)
 INTERVAL_SECONDS = _i("COORDINATOR_INTERVAL_SECONDS", 900)  # Default 15 minuti
 AUTO_REBALANCE = _b("AUTO_REBALANCE", False)
 MIN_REBALANCE_USD = _f("MIN_REBALANCE_USD", 10.0)
+MAX_REBALANCE_FEE_PCT = _f("MAX_REBALANCE_FEE_PCT", 2.0)        # Salta il transfer se il gas stimato supera questa % dell'importo
 MIN_SWEEP_IDLE_USD = _f("MIN_SWEEP_IDLE_USD", 1.0)          # Soglia minima di recupero per bot a target 0%
 REBALANCE_THRESHOLD_PCT = _f("REBALANCE_THRESHOLD_PCT", 5.0)
 
