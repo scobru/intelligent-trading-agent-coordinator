@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 TIMEOUT_SECONDS = 4.0
 
+# Il release vende i token on-chain in modo sincrono (fino a TX_TIMEOUT_SECONDS=180 per tx lato agente).
+RELEASE_TIMEOUT_SECONDS = 300.0
+
+
 class AgentClient:
     def __init__(self):
         self.agents_config = config.AGENTS
@@ -445,7 +449,7 @@ class AgentClient:
 
         payload = {"amount_usd": round(amount_usd, 2)}
         try:
-            resp = requests.post(url, json=payload, headers=headers, auth=self.auth, timeout=30.0)
+            resp = requests.post(url, json=payload, headers=headers, auth=self.auth, timeout=RELEASE_TIMEOUT_SECONDS)
             if resp.status_code == 200:
                 data = resp.json()
                 logger.info("✅ Svincolo fondi riuscito per %s: %s", agent_id, data)
