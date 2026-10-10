@@ -180,3 +180,18 @@ def test_gas_eth_excluded_from_allocatable_net_worth():
     }
     plan = allocator.compute_allocation_plan(regime="BALANCED", agents_status=agents_status)
     assert plan["total_net_worth_usd"] == 1000.0
+
+
+def test_idle_bot_without_liquid_usdc_not_swept():
+    allocator = CapitalAllocator()
+    # LP/Neutral a target 0%, nessuna posizione, equity ~$8 (solo gas ETH) ma 0 USDC liquidi:
+    # nessuno sweep, altrimenti il Treasury lo salta a ogni ciclo.
+    agents_status = {
+        "lp": {"equity_usd": 8.11, "balance_usd": 0.0, "positions_count": 0, "online": True},
+        "neutral": {"equity_usd": 8.11, "balance_usd": 0.0, "positions_count": 0, "online": True},
+        "degen": {"equity_usd": 36.83, "balance_usd": 10.0, "positions_count": 4, "online": True},
+        "dca": {"equity_usd": 2.92, "balance_usd": 2.92, "positions_count": 1, "online": True},
+    }
+    for regime in ("BALANCED", "HIGH_VOLATILITY"):
+        plan = allocator.compute_allocation_plan(regime=regime, agents_status=agents_status)
+        assert not [a for a in plan["actions"] if a["from_agent"] in ("lp", "neutral")]
