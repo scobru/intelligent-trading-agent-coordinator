@@ -119,6 +119,15 @@ class CapitalAllocator:
 
         return weights, pruned_notes
 
+    @staticmethod
+    def _sweepable_usd(st: Dict[str, Any], fallback: float) -> float:
+        """USDC effettivamente trasferibili da un bot: senza posizioni aperte non c'e' nulla da svincolare,
+        quindi conta solo il saldo USDC liquido (l'equity puo' includere gas ETH o residui non trasferibili
+        e generare sweep che il Treasury salta a ogni ciclo)."""
+        if int(st.get("positions_count", 0)) == 0 and "balance_usd" in st:
+            return float(st.get("balance_usd") or 0.0)
+        return fallback
+
     def compute_allocation_plan(
         self,
         regime: str,
@@ -200,8 +209,7 @@ class CapitalAllocator:
         if regime in ("HIGH_VOLATILITY", "BEAR_PANIC") and agents_equity.get("lp", 0.0) > min_sweep_idle:
             lp_bal = agents_equity.get("lp", 0.0)
             st_lp = agents_status.get("lp", {})
-            op_lp = float(st_lp.get("equity_usd", 0.0) or st_lp.get("balance_usd", 0.0) or 0.0)
-            amount_lp = min(lp_bal, op_lp) if op_lp > 0 else lp_bal
+            amount_lp = min(lp_bal, self._sweepable_usd(st_lp, lp_bal))
             if amount_lp >= min_sweep_idle:
                 actions.append({
                     "action": "WITHDRAW_TO_SAFE_HAVEN",
@@ -271,9 +279,8 @@ class CapitalAllocator:
                     if valid_under:
                         target_dest = sorted(valid_under, key=lambda x: x[1], reverse=True)[0][0]
 
-                # Calcola l'effettivo importo operativo USDC svincolabile (esclude riserve gas ETH)
-                op_usdc = float(st.get("equity_usd", 0.0) or st.get("balance_usd", 0.0) or 0.0)
-                amount_to_sweep = min(surplus, op_usdc) if op_usdc > 0 else surplus
+                op_usdc = self._sweepable_usd(st, surplus)
+                amount_to_sweep = min(surplus, op_usdc)
 
                 if amount_to_sweep >= min_sweep_idle:
                     actions.append({
@@ -287,7 +294,8 @@ class CapitalAllocator:
                             f"(operativo: ${op_usdc:.2f}, target $0). Spostamento a {target_dest.upper()}."
                         )
                     })
-                    handled_overweight.add(agent_id)
+                # Anche senza USDC liquidi non va usato come sorgente nel ribilanciamento standard
+                handled_overweight.add(agent_id)
             elif agent_id in ("degen", "perp"):
                 target_dest = "dca" if weights.get("dca", 0.0) > 0 else "yield"
                 actions.append({
