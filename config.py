@@ -120,8 +120,10 @@ AGENTS = {
 
 DASHBOARD_RUN_TOKEN = os.getenv("DASHBOARD_RUN_TOKEN", "").strip()
 AGENT_RUN_TOKEN = os.getenv("AGENT_RUN_TOKEN", DASHBOARD_RUN_TOKEN).strip()
-AGENT_HTTP_USER = os.getenv("AGENT_HTTP_USER", os.getenv("HTTP_BASIC_USER", "scobru")).strip()
-AGENT_HTTP_PASS = os.getenv("AGENT_HTTP_PASS", os.getenv("HTTP_BASIC_PASS", AGENT_RUN_TOKEN or "francos88")).strip()
+# Basic auth davanti alle dashboard dei bot (es. CapRover): nessun default nel
+# codice, le credenziali vanno solo nelle variabili d'ambiente
+AGENT_HTTP_USER = os.getenv("AGENT_HTTP_USER", os.getenv("HTTP_BASIC_USER", "")).strip()
+AGENT_HTTP_PASS = os.getenv("AGENT_HTTP_PASS", os.getenv("HTTP_BASIC_PASS", "")).strip()
 
 # Chiavi private opzionali per i sub-agenti (Cross-Bot Gas Sharing)
 SUB_AGENTS_PRIVATE_KEY = os.getenv("SUB_AGENTS_PRIVATE_KEY", "").strip()
