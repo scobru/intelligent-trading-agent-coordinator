@@ -866,18 +866,17 @@ class MasterDashboardHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-            if not _latest_status_cache and self.coordinator:
-                try:
-                    _latest_status_cache = self.coordinator.run_cycle()
-                except Exception as exc:
-                    logger.error("Errore run_cycle durante /api/status: %s", exc)
-                    _latest_status_cache = {
-                        "error": str(exc),
-                        "total_net_worth_usd": 0.0,
-                        "regime": "BALANCED",
-                        "agents": {},
-                        "treasury": {}
-                    }
+            if not _latest_status_cache:
+                # A GET must not run a cycle: it would race the main.py loop and
+                # execute every rebalance/refuel transfer twice.
+                self._json(200, {
+                    "error": "Nessuno snapshot ancora: attendi il primo ciclo del coordinator.",
+                    "total_net_worth_usd": 0.0,
+                    "regime": "BALANCED",
+                    "agents": {},
+                    "treasury": {}
+                })
+                return
 
             if _latest_status_cache:
                 _latest_status_cache["mode"] = "paper" if config.PAPER_TRADING else ("dry_run" if config.DRY_RUN else "live")
