@@ -204,8 +204,8 @@ class CapitalAllocator:
         actions: List[Dict[str, Any]] = []
         handled_overweight = set()
 
-        # 1. Regola Speciale per Alta Volatilita' / Panic: Svuota LP verso Degen o DCA
-        dest_safe = "degen" if weights.get("degen", 0.0) > 0 else ("dca" if weights.get("dca", 0.0) > 0 else "yield")
+        # 1. Regola Speciale per Alta Volatilita' / Panic: Svuota LP verso DCA (o Yield)
+        dest_safe = "dca" if weights.get("dca", 0.0) > 0 else ("yield" if weights.get("yield", 0.0) > 0 else "degen")
         if regime in ("HIGH_VOLATILITY", "BEAR_PANIC") and agents_equity.get("lp", 0.0) > min_sweep_idle:
             lp_bal = agents_equity.get("lp", 0.0)
             st_lp = agents_status.get("lp", {})
