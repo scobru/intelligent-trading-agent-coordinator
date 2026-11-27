@@ -195,3 +195,21 @@ def test_idle_bot_without_liquid_usdc_not_swept():
     for regime in ("BALANCED", "HIGH_VOLATILITY"):
         plan = allocator.compute_allocation_plan(regime=regime, agents_status=agents_status)
         assert not [a for a in plan["actions"] if a["from_agent"] in ("lp", "neutral")]
+
+
+def test_panic_sweeps_lp_to_dca():
+    allocator = CapitalAllocator()
+    agents_status = {
+        "lp": {"equity_usd": 1000.0, "balance_usd": 1000.0, "positions_count": 0, "online": True},
+        "perp": {"equity_usd": 0.0, "positions_count": 0, "online": True},
+        "neutral": {"equity_usd": 0.0, "positions_count": 0, "online": True},
+        "dca": {"equity_usd": 0.0, "positions_count": 0, "online": True},
+        "degen": {"equity_usd": 0.0, "positions_count": 0, "online": True},
+        "yield": {"equity_usd": 0.0, "positions_count": 0, "online": True},
+    }
+    plan = allocator.compute_allocation_plan(
+        regime="BEAR_PANIC", agents_status=agents_status, treasury_cash_usd=0.0
+    )
+    safe = [a for a in plan["actions"] if a["action"] == "WITHDRAW_TO_SAFE_HAVEN"]
+    assert len(safe) == 1
+    assert safe[0]["to_agent"] == "dca"
